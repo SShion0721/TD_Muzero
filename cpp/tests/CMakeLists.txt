@@ -2,6 +2,10 @@ add_executable(test_engine test_engine.cpp)
 target_link_libraries(test_engine tdmz_core)
 add_test(NAME test_engine COMMAND test_engine)
 
+add_executable(test_board_tables test_board_tables.cpp)
+target_link_libraries(test_board_tables tdmz_core)
+add_test(NAME test_board_tables COMMAND test_board_tables)
+
 add_executable(test_game_logic test_game_logic.cpp)
 target_link_libraries(test_game_logic tdmz_core)
 add_test(NAME test_game_logic COMMAND test_game_logic)
