@@ -29,6 +29,9 @@ add_subdirectory(tests)
 add_executable(export_cpp_trace apps/export_cpp_trace.cpp)
 target_link_libraries(export_cpp_trace tdmz_core)
 
+add_executable(export_golden_traces apps/export_golden_traces.cpp)
+target_link_libraries(export_golden_traces tdmz_core)
+
 add_executable(bench_engine apps/bench_engine.cpp)
 target_link_libraries(bench_engine tdmz_core)
 
