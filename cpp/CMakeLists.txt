@@ -35,6 +35,9 @@ target_link_libraries(export_golden_traces tdmz_core)
 add_executable(export_defense_capacity apps/export_defense_capacity.cpp)
 target_link_libraries(export_defense_capacity tdmz_core)
 
+add_executable(export_attack_budget apps/export_attack_budget.cpp)
+target_link_libraries(export_attack_budget tdmz_core)
+
 add_executable(bench_engine apps/bench_engine.cpp)
 target_link_libraries(bench_engine tdmz_core)
 
