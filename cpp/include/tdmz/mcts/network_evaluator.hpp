@@ -5,9 +5,12 @@ namespace tdmz {
 
 struct EvalInput {
     int batch_size = 0;
-    // TODO(Phase 3): Replace with proper LatentRef when LibTorch latent store is introduced.
-    // Currently these are node IDs of the parent nodes, NOT latent state indices.
+    // Parent node IDs are used by evaluators with a latent store to fetch the
+    // latent state before applying the selected action.
     std::vector<int> parent_node_ids;
+    // Current/target node IDs are where recurrent evaluators should store the
+    // newly produced latent state. Dummy evaluators may ignore this field.
+    std::vector<int> target_node_ids;
     std::vector<int> actions;
 };
 
