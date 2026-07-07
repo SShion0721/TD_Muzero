@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <cstdint>
 #include <vector>
 #include "tdmz/core/action.hpp"
 #include "tdmz/core/tower.hpp"
@@ -11,6 +12,12 @@ namespace tdmz {
 struct StepResult {
     float reward = 0.0f;
     bool done = false;
+};
+
+struct EnginePerfCounters {
+    uint64_t pathfind_calls = 0;
+    uint64_t placeable_recompute = 0;
+    uint64_t legal_recompute = 0;
 };
 
 class TDEngine {
@@ -32,7 +39,7 @@ public:
 
     std::array<std::array<bool, kBoardW>, kBoardH> compute_placeable_mask() const;
     std::vector<std::pair<int,int>> find_path(int sx, int sy, int ex, int ey) const;
-    
+
     const std::vector<Tower>& towers() const { return towers_; }
     const std::vector<Enemy>& enemies() const { return enemies_; }
 
@@ -52,9 +59,11 @@ public:
     int height() const { return height_; }
 
     bool in_bounds(int x, int y) const;
-    
-    // Allows us to inspect the raw grid
+
     const std::array<std::array<int, kBoardW>, kBoardH>& grid() const { return grid_; }
+
+    const EnginePerfCounters& perf_counters() const { return perf_; }
+    void reset_perf_counters() const { perf_ = EnginePerfCounters{}; }
 
 private:
     int width_;
@@ -79,6 +88,31 @@ private:
     uint64_t seed_;
     PythonRNG rng_;
     int enemy_id_counter_;
+
+    uint64_t grid_version_ = 0;
+    uint64_t tower_version_ = 0;
+    uint64_t money_version_ = 0;
+    uint64_t enemy_version_ = 0;
+    uint64_t wave_version_ = 0;
+
+    mutable EnginePerfCounters perf_;
+
+    mutable bool placeable_cache_valid_ = false;
+    mutable uint64_t placeable_grid_version_ = 0;
+    mutable std::array<std::array<bool, kBoardW>, kBoardH> cached_placeable_mask_{};
+
+    mutable bool legal_cache_valid_ = false;
+    mutable uint64_t legal_grid_version_ = 0;
+    mutable uint64_t legal_tower_version_ = 0;
+    mutable uint64_t legal_money_version_ = 0;
+    mutable std::vector<int> cached_legal_actions_;
+
+    void invalidate_all_caches();
+    void mark_grid_changed();
+    void mark_towers_changed();
+    void mark_money_changed();
+    void mark_enemies_changed();
+    void mark_wave_changed();
 
     std::vector<EnemySpec> get_wave_enemies();
 };
