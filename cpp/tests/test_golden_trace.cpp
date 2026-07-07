@@ -11,13 +11,18 @@ static void check_true(bool ok, const char* expr, int line) {
 #define CHECK_TRUE(x) check_true(static_cast<bool>(x), #x, __LINE__)
 
 int main() {
+    constexpr uint64_t kExpectedCombined = 0x595648689a6a7435ULL;
+    constexpr uint64_t kExpectedWaitOnly = 0x385b69812eea12a1ULL;
+    constexpr uint64_t kExpectedMixedBuild = 0xf16bcd753375ebc1ULL;
+    constexpr uint64_t kExpectedInvalidAndSlow = 0xd142454b6573e9d4ULL;
+
     auto cases = default_golden_trace_cases();
     CHECK_TRUE(cases.size() == 3);
 
     uint64_t combined_a = hash_golden_trace_cases(cases);
     uint64_t combined_b = hash_golden_trace_cases(cases);
     CHECK_TRUE(combined_a == combined_b);
-    CHECK_TRUE(combined_a != 0);
+    CHECK_TRUE(combined_a == kExpectedCombined);
 
     for (const auto& tc : cases) {
         auto a = run_golden_trace_case(tc);
@@ -30,8 +35,22 @@ int main() {
         CHECK_TRUE(a.back().time >= a.front().time);
         CHECK_TRUE(a.back().legal_action_count > 0);
         CHECK_TRUE(a.back().placeable_count >= 0);
+
+        uint64_t h = hash_golden_trace(a);
+        if (tc.name == "wait_only_seed0") {
+            CHECK_TRUE(h == kExpectedWaitOnly);
+            CHECK_TRUE(a.size() == 16);
+        } else if (tc.name == "mixed_build_seed1") {
+            CHECK_TRUE(h == kExpectedMixedBuild);
+            CHECK_TRUE(a.size() == 10);
+        } else if (tc.name == "invalid_and_slow_seed42") {
+            CHECK_TRUE(h == kExpectedInvalidAndSlow);
+            CHECK_TRUE(a.size() == 10);
+        } else {
+            CHECK_TRUE(false);
+        }
     }
 
-    std::cout << "Golden trace determinism tests passed. combined_hash=0x" << std::hex << combined_a << std::dec << std::endl;
+    std::cout << "Golden trace semantic lock passed. combined_hash=0x" << std::hex << combined_a << std::dec << std::endl;
     return 0;
 }
