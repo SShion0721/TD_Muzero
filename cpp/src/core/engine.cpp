@@ -196,6 +196,12 @@ std::vector<std::pair<int,int>> TDEngine::path_to_base_from_cell(int start_cell)
     return path;
 }
 
+int TDEngine::distance_to_base_cell(int cell) const {
+    if (!valid_cell(cell)) return kInf;
+    recompute_base_distance_cache();
+    return cached_base_distance_[cell];
+}
+
 std::vector<std::pair<int,int>> TDEngine::find_path(int sx, int sy, int ex, int ey) const {
     ++perf_.pathfind_calls;
     if (!valid_cell_xy(sx, sy) || !valid_cell_xy(ex, ey)) {
