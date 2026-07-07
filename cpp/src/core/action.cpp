@@ -1,4 +1,5 @@
 #include "tdmz/core/action.hpp"
+#include "tdmz/core/board_tables.hpp"
 #include <stdexcept>
 #include <sstream>
 
@@ -17,59 +18,32 @@ Action decode_action(int id) {
         throw std::invalid_argument("Invalid flat action id");
     }
 
+    const auto& tables = board_tables();
     Action a;
     a.flat_id = id;
-
-    if (id < kFlatUpgradeOffset) {
-        int tower_type = id / kCells;
-        int rem = id % kCells;
-        a.type = static_cast<ActionType>(tower_type);
-        a.y = rem / kBoardW;
-        a.x = rem % kBoardW;
-        a.wait_steps = 1;
-        return a;
-    }
-
-    if (id < kFlatSellOffset) {
-        int rem = id - kFlatUpgradeOffset;
-        a.type = ActionType::Upgrade;
-        a.y = rem / kBoardW;
-        a.x = rem % kBoardW;
-        a.wait_steps = 1;
-        return a;
-    }
-
-    if (id < kFlatWaitOffset) {
-        int rem = id - kFlatSellOffset;
-        a.type = ActionType::Sell;
-        a.y = rem / kBoardW;
-        a.x = rem % kBoardW;
-        a.wait_steps = 1;
-        return a;
-    }
-
-    a.type = ActionType::Wait1;
-    a.wait_steps = 1;
-    a.x = -1;
-    a.y = -1;
+    a.type = tables.action_type[id];
+    a.x = tables.action_x[id];
+    a.y = tables.action_y[id];
+    a.wait_steps = tables.action_wait[id];
     return a;
 }
 
 int encode_action(const Action& a) {
+    const auto& tables = board_tables();
     if (is_build(a.type)) {
         validate_cell(a.x, a.y);
-        return static_cast<int>(a.type) * kCells + a.y * kBoardW + a.x;
+        return tables.build_action[static_cast<int>(a.type)][a.y * kBoardW + a.x];
     }
     if (a.type == ActionType::Upgrade) {
         validate_cell(a.x, a.y);
-        return kFlatUpgradeOffset + a.y * kBoardW + a.x;
+        return tables.upgrade_action[a.y * kBoardW + a.x];
     }
     if (a.type == ActionType::Sell) {
         validate_cell(a.x, a.y);
-        return kFlatSellOffset + a.y * kBoardW + a.x;
+        return tables.sell_action[a.y * kBoardW + a.x];
     }
     if (a.type == ActionType::Wait1) {
-        return kFlatWaitOffset;
+        return tables.wait_action;
     }
     throw std::invalid_argument("Invalid action type for encoding");
 }
