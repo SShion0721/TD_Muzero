@@ -1,0 +1,116 @@
+#include "tdmz/balance/defense_capacity.hpp"
+#include "tdmz/core/action.hpp"
+#include <cmath>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+
+using namespace tdmz;
+
+static void check_true(bool ok, const char* expr, int line) {
+    if (!ok) throw std::runtime_error(std::string("check failed at line ") + std::to_string(line) + ": " + expr);
+}
+#define CHECK_TRUE(x) check_true(static_cast<bool>(x), #x, __LINE__)
+
+static void check_close(float a, float b, float eps, const char* expr, int line) {
+    if (std::fabs(a - b) > eps) throw std::runtime_error(std::string("check failed at line ") + std::to_string(line) + ": " + expr);
+}
+#define CHECK_CLOSE(a, b, eps) check_close((a), (b), (eps), #a " ~= " #b, __LINE__)
+
+void test_empty_defense_has_leak_cap() {
+    TDEngine env(11, 11, 0);
+    DefenseCapacityConfig cfg;
+    cfg.include_spendable_money = false;
+    auto r = estimate_defense_capacity(env, cfg);
+    CHECK_CLOSE(r.current_tower_damage_cap, 0.0f, 1e-5f);
+    CHECK_CLOSE(r.spendable_money_damage_cap, 0.0f, 1e-5f);
+    CHECK_CLOSE(r.leak_hp_cap, 990.0f, 1e-5f);
+    CHECK_CLOSE(r.allowed_attack_hp, 891.0f, 1e-5f);
+    CHECK_TRUE(r.placeable_count > 0);
+}
+
+void test_current_tower_cap_increases() {
+    TDEngine empty(11, 11, 0);
+    DefenseCapacityConfig cfg;
+    cfg.include_spendable_money = false;
+    auto r0 = estimate_defense_capacity(empty, cfg);
+
+    TDEngine basic(11, 11, 0);
+    CHECK_TRUE(basic.place_tower(1, 1, TowerType::Basic));
+    auto r1 = estimate_defense_capacity(basic, cfg);
+    CHECK_TRUE(r1.current_tower_damage_cap > r0.current_tower_damage_cap);
+    CHECK_TRUE(r1.allowed_attack_hp > r0.allowed_attack_hp);
+}
+
+void test_sniper_cap_beats_basic() {
+    DefenseCapacityConfig cfg;
+    cfg.include_spendable_money = false;
+
+    TDEngine basic(11, 11, 0);
+    TDEngine sniper(11, 11, 0);
+    CHECK_TRUE(basic.place_tower(1, 1, TowerType::Basic));
+    CHECK_TRUE(sniper.place_tower(1, 1, TowerType::Sniper));
+
+    auto rb = estimate_defense_capacity(basic, cfg);
+    auto rs = estimate_defense_capacity(sniper, cfg);
+    CHECK_TRUE(rs.current_tower_damage_cap > rb.current_tower_damage_cap);
+}
+
+void test_virtual_base_hp_and_safety_factor() {
+    TDEngine env(11, 11, 0);
+    DefenseCapacityConfig high;
+    high.include_spendable_money = false;
+    high.virtual_base_hp = 100;
+    high.safety_factor = 1.0f;
+
+    DefenseCapacityConfig low = high;
+    low.virtual_base_hp = 20;
+    auto rh = estimate_defense_capacity(env, high);
+    auto rl = estimate_defense_capacity(env, low);
+    CHECK_TRUE(rl.leak_hp_cap < rh.leak_hp_cap);
+
+    DefenseCapacityConfig half = high;
+    half.safety_factor = 0.5f;
+    auto rhalf = estimate_defense_capacity(env, half);
+    CHECK_CLOSE(rhalf.allowed_attack_hp, rh.allowed_attack_hp * 0.5f, 1e-5f);
+}
+
+void test_spendable_money_adds_capacity() {
+    TDEngine env(11, 11, 0);
+    DefenseCapacityConfig without;
+    without.include_spendable_money = false;
+    DefenseCapacityConfig with;
+    with.include_spendable_money = true;
+
+    auto r0 = estimate_defense_capacity(env, without);
+    auto r1 = estimate_defense_capacity(env, with);
+    CHECK_TRUE(r1.spendable_money_damage_cap > 0.0f);
+    CHECK_TRUE(r1.selected_new_tower_count > 0);
+    CHECK_TRUE(r1.raw_hp_cap > r0.raw_hp_cap);
+    CHECK_TRUE(r1.allowed_attack_hp > r0.allowed_attack_hp);
+}
+
+void test_negative_free_result() {
+    TDEngine env(11, 11, 0);
+    DefenseCapacityConfig cfg;
+    cfg.wave_window_seconds = -1.0f;
+    cfg.safety_factor = -1.0f;
+    cfg.virtual_base_hp = -10;
+    auto r = estimate_defense_capacity(env, cfg);
+    CHECK_TRUE(r.current_tower_damage_cap >= 0.0f);
+    CHECK_TRUE(r.spendable_money_damage_cap >= 0.0f);
+    CHECK_TRUE(r.leak_hp_cap >= 0.0f);
+    CHECK_TRUE(r.raw_hp_cap >= 0.0f);
+    CHECK_TRUE(r.allowed_attack_hp >= 0.0f);
+}
+
+int main() {
+    test_empty_defense_has_leak_cap();
+    test_current_tower_cap_increases();
+    test_sniper_cap_beats_basic();
+    test_virtual_base_hp_and_safety_factor();
+    test_spendable_money_adds_capacity();
+    test_negative_free_result();
+    std::cout << "Defense capacity tests passed!" << std::endl;
+    return 0;
+}
