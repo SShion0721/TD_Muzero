@@ -18,7 +18,6 @@ RootSearchOutput MCTS::search_single(
     int root_id = pool.allocate();
 
     auto init_out = net.initial_inference({observation});
-    
     expand_node(pool, root_id, -1, -1, 0.0f, 1.0f, legal_actions, init_out.policy_logits[0]);
 
     SearchDebugStats debug;
@@ -39,34 +38,31 @@ RootSearchOutput MCTS::search_single(
         EvalInput eval_in;
         eval_in.batch_size = 1;
         eval_in.parent_node_ids = {leaf.parent};
+        eval_in.target_node_ids = {current};
         eval_in.actions = {leaf.action_from_parent};
-        
+
         auto rec_out = net.recurrent_inference(eval_in);
-        
+
         float value = rec_out.values[0];
         float reward = rec_out.rewards[0];
-
         auto topk_actions = select_topk_candidates(rec_out.policy_logits[0], cfg_.latent_top_k);
 
-        // Track latent branching factor
         debug.max_latent_branching = std::max(
             debug.max_latent_branching, static_cast<int>(topk_actions.size()));
 
         expand_node(pool, current, leaf.parent, leaf.action_from_parent, reward, leaf.prior, topk_actions, rec_out.policy_logits[0]);
-
         backup(pool, search_path, value, minmax);
     }
 
     debug.total_nodes = pool.size();
 
     RootSearchOutput out;
-    // Use search-after root value, NOT the raw initial_inference value
     out.root_value = pool.get(root_id).value();
     out.debug = debug;
-    
+
     int best_action = -1;
     int best_visit_count = -1;
-    
+
     const Node& root_node = pool.get(root_id);
     out.root_actions = root_node.actions;
     out.visit_counts.resize(root_node.actions.size());
@@ -85,13 +81,13 @@ RootSearchOutput MCTS::search_single(
     }
 
     out.action = best_action;
-    
+
     if (total_visits > 0.0f) {
         for (int i = 0; i < static_cast<int>(root_node.actions.size()); ++i) {
             out.policy_full[root_node.actions[i]] = out.visit_counts[i] / total_visits;
         }
     }
-    
+
     return out;
 }
 
@@ -198,13 +194,13 @@ std::vector<int> MCTS::select_topk_candidates(
     for (int i = 0; i < static_cast<int>(policy_logits.size()); ++i) {
         scored_actions.push_back({policy_logits[i], i});
     }
-    
+
     int actual_k = std::min(k, static_cast<int>(scored_actions.size()));
     std::partial_sort(scored_actions.begin(), scored_actions.begin() + actual_k, scored_actions.end(),
                       [](const auto& a, const auto& b) {
                           return a.first > b.first;
                       });
-                      
+
     std::vector<int> topk;
     topk.reserve(actual_k);
     for (int i = 0; i < actual_k; ++i) {
@@ -218,12 +214,12 @@ std::vector<float> MCTS::softmax_over_actions(
     const std::vector<int>& actions
 ) const {
     if (actions.empty()) return {};
-    
+
     float max_logit = -std::numeric_limits<float>::infinity();
     for (int a : actions) {
         max_logit = std::max(max_logit, logits[a]);
     }
-    
+
     std::vector<float> exps;
     exps.reserve(actions.size());
     float sum_exp = 0.0f;
@@ -232,11 +228,11 @@ std::vector<float> MCTS::softmax_over_actions(
         exps.push_back(e);
         sum_exp += e;
     }
-    
+
     for (float& e : exps) {
         e /= sum_exp;
     }
-    
+
     return exps;
 }
 
