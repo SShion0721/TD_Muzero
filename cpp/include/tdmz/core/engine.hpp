@@ -41,6 +41,8 @@ public:
     int wave() const { return wave_; }
     float spawn_timer() const { return spawn_timer_; }
     int enemies_to_spawn_count() const { return static_cast<int>(enemies_to_spawn_.size()); }
+    bool game_over() const { return game_over_; }
+    float time() const { return time_; }
 
     int spawn_x() const { return spawn_x_; }
     int spawn_y() const { return spawn_y_; }

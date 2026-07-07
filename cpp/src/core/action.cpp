@@ -37,13 +37,12 @@ Action decode_action(int id) {
     }
 
     int wait_id = id - kFlatWaitOffset;
-    static constexpr int waits[4] = {1, 2, 4, 8};
-    if (wait_id < 0 || wait_id >= kWaitActions) {
+    if (wait_id != 0) {
         throw std::invalid_argument("Invalid flat action id");
     }
     
-    a.type = static_cast<ActionType>(static_cast<int>(ActionType::Wait1) + wait_id);
-    a.wait_steps = waits[wait_id];
+    a.type = ActionType::Wait1;
+    a.wait_steps = 1;
     a.x = -1;
     a.y = -1;
     return a;
@@ -62,9 +61,6 @@ int encode_action(const Action& a) {
     
     // Wait actions
     if (a.type == ActionType::Wait1) return kFlatWaitOffset + 0;
-    if (a.type == ActionType::Wait2) return kFlatWaitOffset + 1;
-    if (a.type == ActionType::Wait4) return kFlatWaitOffset + 2;
-    if (a.type == ActionType::Wait8) return kFlatWaitOffset + 3;
     
     throw std::invalid_argument("Invalid action type for encoding");
 }
@@ -77,10 +73,7 @@ bool is_build(ActionType t) {
 }
 
 bool is_wait(ActionType t) {
-    return t == ActionType::Wait1 || 
-           t == ActionType::Wait2 || 
-           t == ActionType::Wait4 || 
-           t == ActionType::Wait8;
+    return t == ActionType::Wait1;
 }
 
 std::string action_to_string(const Action& a) {

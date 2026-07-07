@@ -17,19 +17,16 @@ enum class ActionType : int {
     Upgrade = 4,
     Sell = 5,
     Wait1 = 6,
-    Wait2 = 7,
-    Wait4 = 8,
-    Wait8 = 9,
 };
 
 constexpr int kBuildTypes = 4;
-constexpr int kActionTypes = 10;
+constexpr int kActionTypes = 7;
 constexpr int kFlatBuildOffset = 0;
 constexpr int kFlatUpgradeOffset = kCells * 4;
 constexpr int kFlatSellOffset = kCells * 5;
 constexpr int kFlatWaitOffset = kCells * 6;
-constexpr int kWaitActions = 4;
-constexpr int kActionSpaceSize = kCells * 6 + kWaitActions; // 121 * 6 + 4 = 726 + 4 = 730 actions
+constexpr int kWaitActions = 1;
+constexpr int kActionSpaceSize = 727;
 
 struct Action {
     ActionType type;
