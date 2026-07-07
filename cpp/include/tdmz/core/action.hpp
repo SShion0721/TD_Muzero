@@ -26,7 +26,7 @@ constexpr int kFlatUpgradeOffset = kCells * 4;
 constexpr int kFlatSellOffset = kCells * 5;
 constexpr int kFlatWaitOffset = kCells * 6;
 constexpr int kWaitActions = 1;
-constexpr int kActionSpaceSize = 727;
+constexpr int kActionSpaceSize = kCells * 6 + kWaitActions;
 
 struct Action {
     ActionType type;
@@ -35,8 +35,14 @@ struct Action {
     int wait_steps = 1;
     int flat_id = -1;
 
+    // Semantic equality only. flat_id is a cached encoding/debug field and is
+    // intentionally ignored so manually constructed actions compare equal to
+    // decoded actions with the same meaning.
     bool operator==(const Action& other) const {
-        return type == other.type && x == other.x && y == other.y && wait_steps == other.wait_steps && flat_id == other.flat_id;
+        return type == other.type &&
+               x == other.x &&
+               y == other.y &&
+               wait_steps == other.wait_steps;
     }
 };
 
