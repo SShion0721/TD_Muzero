@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <vector>
 #include "tdmz/core/action.hpp"
+#include "tdmz/core/board_tables.hpp"
 #include "tdmz/core/tower.hpp"
 #include "tdmz/core/enemy.hpp"
 #include "tdmz/core/rng.hpp"
@@ -18,6 +19,7 @@ struct EnginePerfCounters {
     uint64_t pathfind_calls = 0;
     uint64_t placeable_recompute = 0;
     uint64_t legal_recompute = 0;
+    uint64_t base_distance_recompute = 0;
 };
 
 class TDEngine {
@@ -61,6 +63,7 @@ public:
     bool in_bounds(int x, int y) const;
 
     const std::array<std::array<int, kBoardW>, kBoardH>& grid() const { return grid_; }
+    Bitboard128 blocked_bitboard() const { return bb_blocked_; }
 
     const EnginePerfCounters& perf_counters() const { return perf_; }
     void reset_perf_counters() const { perf_ = EnginePerfCounters{}; }
@@ -81,6 +84,7 @@ private:
     bool game_over_;
 
     std::array<std::array<int, kBoardW>, kBoardH> grid_;
+    Bitboard128 bb_blocked_;
     std::vector<Tower> towers_;
     std::vector<Enemy> enemies_;
     std::vector<EnemySpec> enemies_to_spawn_;
@@ -107,12 +111,20 @@ private:
     mutable uint64_t legal_money_version_ = 0;
     mutable std::vector<int> cached_legal_actions_;
 
+    mutable bool base_distance_cache_valid_ = false;
+    mutable uint64_t base_distance_grid_version_ = 0;
+    mutable std::array<int, kCells> cached_base_distance_{};
+    mutable std::array<int, kCells> cached_next_to_base_{};
+
     void invalidate_all_caches();
     void mark_grid_changed();
     void mark_towers_changed();
     void mark_money_changed();
     void mark_enemies_changed();
     void mark_wave_changed();
+
+    void recompute_base_distance_cache() const;
+    std::vector<std::pair<int,int>> path_to_base_from_cell(int start_cell) const;
 
     std::vector<EnemySpec> get_wave_enemies();
 };
