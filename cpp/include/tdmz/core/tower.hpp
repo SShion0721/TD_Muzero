@@ -2,6 +2,8 @@
 
 namespace tdmz {
 
+constexpr int kTowerMaxLevel = 5;
+
 enum class TowerType : int {
     Basic = 0,
     Sniper = 1,
@@ -25,7 +27,7 @@ struct Tower {
     int x;
     int y;
     TowerType type;
-    
+
     int cost;
     float damage;
     float range;
@@ -33,14 +35,15 @@ struct Tower {
     float aoe_radius;
     float slow_factor;
     float slow_duration;
-    
+
     float cooldown;
     int level;
     int total_spent;
     int upgrade_cost;
 
     Tower(int x, int y, TowerType type);
-    
+
+    bool can_upgrade() const;
     void upgrade();
     void step(float dt);
     bool can_shoot() const;
