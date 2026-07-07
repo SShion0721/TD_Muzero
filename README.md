@@ -43,6 +43,17 @@ The current direction is to move the old Python prototype toward a fast C++ engi
   - Added cached `compute_placeable_mask()` keyed by grid version.
   - Added cached `legal_actions()` keyed by grid / tower / money versions.
 
+- Phase 4.2E-H: Stockfish/Amazons-style table and path optimization pass
+  - Added `Bitboard128` for the 121-cell board.
+  - Added precomputed board geometry tables: cell coordinates, 4-neighbor lists, bitboards, Manhattan distances, squared distances, tower range masks, and action tables.
+  - Replaced generic `priority_queue + map` A* pathfinding with fixed-array BFS.
+  - Added cached base-distance and next-step-to-base fields keyed by `grid_version`.
+  - Enemy pathing to the base now uses the cached base-distance field when possible.
+  - `observation_v1` now reuses cached distance-to-base values.
+  - `compute_placeable_mask()` now uses one DFS/Tarjan-style spawn-base cut-cell pass instead of testing every empty cell with a separate pathfind.
+  - `legal_actions()` now uses precomputed action ids instead of recomputing flat ids.
+  - Added `test_board_tables` for bitboard, geometry, action table, range mask, and BFS regression checks.
+
 ## Current gameplay rules
 
 - Board size: fixed 11x11.
@@ -111,6 +122,7 @@ Current fixed PvE wave generation:
 Normal build should include:
 
 - `test_engine`
+- `test_board_tables`
 - `test_game_logic`
 - `test_mcts`
 - `test_selfplay`
@@ -158,63 +170,53 @@ Recent local result after the first cache pass:
 
 Implemented:
 
+- `Bitboard128` for 121-cell board occupancy.
+- `BoardTables` singleton with precomputed geometry, action ids, and range masks.
+- Fixed-array BFS pathfinding with `dist[121]`, `parent[121]`, and `queue[121]`.
+- Cached base-distance and next-step-to-base fields keyed by `grid_version`.
 - Placeable-mask cache keyed by `grid_version`.
+- Placeable-mask recomputation via one spawn-base cut-cell DFS instead of per-cell pathfinding.
 - Legal-actions cache keyed by `grid_version`, `tower_version`, and `money_version`.
+- Observation distance-to-base reuse through the engine distance cache.
 - Perf counters:
   - `pathfind_calls`
   - `placeable_recompute`
   - `legal_recompute`
+  - `base_distance_recompute`
 
 Not yet implemented:
 
-- Fixed-array BFS / A* replacement for the current `priority_queue + map` pathfinding.
-- Precomputed board geometry tables.
-- Precomputed path masks / distance tables.
-- Observation static-channel cache.
+- Exact tower attack acceleration using range masks and enemy cell buckets.
+- Observation full static-channel cache.
 - Defense capacity / attack budget rules.
 - Debug GUI / trace viewer.
 
 ## Next optimization plan
 
-### Phase 4.2E: pathfinding constant-factor optimization
+### Phase 4.2I: tower attack acceleration
 
-The board is a fixed 11x11 unweighted grid, so the current generic A* implementation can be replaced with a fixed-array BFS or fixed-array A*:
+Use precomputed `range_mask[type][level][cell]` as a coarse filter before exact float-distance checks:
 
-- Use `int dist[121]`.
-- Use `int parent[121]`.
-- Use `int queue[121]`.
-- Avoid `std::map`, heap allocation, and priority queue overhead.
-- Keep neighbor order stable to minimize tie-break changes.
+- Maintain enemy rounded-cell buckets.
+- For each tower, intersect its range mask with occupied enemy cells.
+- Only run exact distance checks on candidate enemies in covered cells.
 
-### Phase 4.2F: precompute board geometry
+### Phase 4.2J: observation static-channel cache
 
-Safe precomputations:
+Static and semi-static channels can be cached by version:
 
-- `cell_id = y * 11 + x`
-- `x[cell]`, `y[cell]`
-- `neighbor_count[cell]`
-- `neighbors[cell][4]`
-- `manhattan[cell_a][cell_b]`
-- `euclidean_distance[cell_a][cell_b]`
-- action-to-cell and action-to-type decode tables
-- cell-to-build-action tables
-- upgrade/sell action tables
+- grid blocked
+- spawn/base
+- tower type
+- tower level
+- distance-to-base
+- placeable mask
 
-These are small tables and fit easily in cache.
+Dynamic channels are still rewritten every step:
 
-### Phase 4.2G: cached distance and path helpers
-
-Likely useful:
-
-- cached base-distance field keyed by `grid_version`
-- cached spawn-to-base path keyed by `grid_version`
-- cached placeable mask keyed by `grid_version` already exists
-
-Potentially useful later:
-
-- bitboard-style occupancy for 121 cells
-- precomputed range masks for each tower type and cell
-- precomputed path coverage masks for defense-capacity estimation
+- tower cooldown
+- enemy HP/density/speed/slow
+- base HP, money, wave, spawn timer, to-spawn count
 
 ### Phase 4.3: defense capacity and attack budget
 
