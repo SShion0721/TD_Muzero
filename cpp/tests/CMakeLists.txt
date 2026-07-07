@@ -14,6 +14,10 @@ add_executable(test_golden_trace test_golden_trace.cpp)
 target_link_libraries(test_golden_trace tdmz_core)
 add_test(NAME test_golden_trace COMMAND test_golden_trace)
 
+add_executable(test_defense_capacity test_defense_capacity.cpp)
+target_link_libraries(test_defense_capacity tdmz_core)
+add_test(NAME test_defense_capacity COMMAND test_defense_capacity)
+
 add_executable(test_mcts test_mcts.cpp)
 target_link_libraries(test_mcts tdmz_core)
 add_test(NAME test_mcts COMMAND test_mcts)
