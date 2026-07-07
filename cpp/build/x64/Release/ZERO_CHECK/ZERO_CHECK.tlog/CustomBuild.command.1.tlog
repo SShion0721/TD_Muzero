@@ -1,0 +1,10 @@
+^E:\DESKTOP\TD_MUZERO\CPP\BUILD\CMAKEFILES\71FB802FC3150105DD51235DA315E556\GENERATE.STAMP.RULE
+setlocal
+C:\Strawberry\c\bin\cmake.exe -SE:/Desktop/TD_MuZero/cpp -BE:/Desktop/TD_MuZero/cpp/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file E:/Desktop/TD_MuZero/cpp/build/TDMuZero.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

@@ -93,10 +93,10 @@ class Game:
     Game wrapper for muzero-general
     """
     def __init__(self, seed=None):
-        self.env = TDEngine(width=11, height=11)
+        self.env = TDEngine(width=11, height=11, seed=seed if seed is not None else 0)
 
-    def reset(self):
-        self.env.reset()
+    def reset(self, seed=None):
+        self.env.reset(seed)
         return self.get_observation()
 
     def step(self, action):

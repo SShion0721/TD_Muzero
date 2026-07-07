@@ -1,5 +1,45 @@
 import heapq
 import math
+import numpy as np
+
+class NumpyRNG:
+    def __init__(self, seed):
+        self.rng = np.random.RandomState(seed)
+        
+    def seed(self, seed):
+        self.rng = np.random.RandomState(seed)
+        
+    def getrandbits(self, k):
+        if k <= 0 or k > 32: raise ValueError
+        # numpy randint high is exclusive, so 2**32
+        r = int(self.rng.randint(0, 2**32, dtype=np.uint32))
+        if k < 32:
+            return r >> (32 - k)
+        return r
+
+    def random(self):
+        a = self.getrandbits(32) >> 5
+        b = self.getrandbits(32) >> 6
+        return (a * 67108864.0 + b) * (1.0 / 9007199254740992.0)
+        
+    def randrange(self, stop):
+        if stop <= 0: raise ValueError
+        n = stop - 1
+        k = n.bit_length()
+        if k == 0: return 0
+        while True:
+            r = self.getrandbits(k)
+            if r < stop:
+                return r
+
+    def choice(self, seq):
+        if len(seq) == 0: raise IndexError
+        return seq[self.randrange(len(seq))]
+        
+    def shuffle(self, seq):
+        for i in reversed(range(1, len(seq))):
+            j = self.randrange(i + 1)
+            seq[i], seq[j] = seq[j], seq[i]
 
 class TowerType:
     BASIC = 0
@@ -110,23 +150,28 @@ class Enemy:
             self.y += (dy / dist) * move_dist
 
 class TDEngine:
-    def __init__(self, width=11, height=11):
+    def __init__(self, width=11, height=11, seed=0):
         self.width = width
         self.height = height
         self.spawn_x, self.spawn_y = 0, height // 2
         self.base_x, self.base_y = width - 1, height // 2
         
-        self.reset()
+        self.seed = seed
+        self.rng = NumpyRNG(self.seed)
+        
+        self.reset(seed)
 
-    def reset(self):
+    def reset(self, seed=None):
+        if seed is not None:
+            self.seed = seed
+            self.rng = NumpyRNG(self.seed)
+            
         self.money = 200
         self.base_hp = 100
         self.grid = [[0 for _ in range(self.width)] for _ in range(self.height)] # 0 = empty, 1 = tower
         self.towers = []
         self.enemies = []
         self.enemy_id_counter = 0
-        self.wave = 1
-        self.enemies_to_spawn = self._get_wave_enemies()
         self.wave = 1
         self.enemies_to_spawn = self._get_wave_enemies()
         self.spawn_timer = 0
@@ -157,8 +202,7 @@ class TDEngine:
             boss_count = 1 + (self.wave // 10)
             enemies_format.extend([{'hp': base_hp * 10.0, 'speed': 0.6, 'reward': 100} for _ in range(boss_count)])
             
-        import random
-        random.shuffle(enemies_format) # Mix them up
+        self.rng.shuffle(enemies_format) # Mix them up
         return enemies_format
 
     def _manhattan(self, x1, y1, x2, y2):

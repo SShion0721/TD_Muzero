@@ -1,0 +1,10 @@
+^E:\DESKTOP\TD_MUZERO\CPP\CMAKELISTS.TXT
+setlocal
+C:\Strawberry\c\bin\cmake.exe -SE:/Desktop/TD_MuZero/cpp -BE:/Desktop/TD_MuZero/cpp/build --check-stamp-file E:/Desktop/TD_MuZero/cpp/build/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
