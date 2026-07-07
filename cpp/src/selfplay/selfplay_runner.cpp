@@ -2,6 +2,7 @@
 #include "tdmz/core/observation.hpp"
 #include "tdmz/mcts/mcts.hpp"
 #include <stdexcept>
+#include <utility>
 
 namespace tdmz {
 
@@ -32,6 +33,13 @@ GameHistory SelfPlayRunner::run(TDEngine& env, INetworkEvaluator& evaluator) con
         }
         auto legal_mask = env.legal_action_mask();
 
+        TrajectoryStep record;
+        record.step_index = step;
+        record.money = env.money();
+        record.base_hp = env.base_hp();
+        record.wave = env.wave();
+        record.time = env.time();
+
         auto search = mcts.search_single(evaluator, observation, legal);
         if (search.action < 0) {
             throw std::runtime_error("MCTS returned an invalid action");
@@ -39,16 +47,10 @@ GameHistory SelfPlayRunner::run(TDEngine& env, INetworkEvaluator& evaluator) con
 
         StepResult result = env.step_action(search.action);
 
-        TrajectoryStep record;
-        record.step_index = step;
         record.action = search.action;
         record.reward = result.reward;
         record.root_value = search.root_value;
         record.done = result.done;
-        record.money = env.money();
-        record.base_hp = env.base_hp();
-        record.wave = env.wave();
-        record.time = env.time();
         record.policy_target = search.policy_full;
         if (cfg_.save_observations) record.observation = std::move(observation);
         if (cfg_.save_legal_mask) record.legal_mask = std::move(legal_mask);
