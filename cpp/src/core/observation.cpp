@@ -1,4 +1,5 @@
 #include "tdmz/core/observation.hpp"
+#include "tdmz/core/board_tables.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -58,6 +59,7 @@ std::array<int, 3> observation_shape_python_parity() {
 Observation make_observation_v1(const TDEngine& env) {
     int w = env.width();
     int h = env.height();
+    const auto& tables = board_tables();
     Observation obs(OBS_CHANNELS * h * w, 0.0f);
 
     auto at = [&](int c, int y, int x) -> float& {
@@ -113,37 +115,15 @@ Observation make_observation_v1(const TDEngine& env) {
 
     auto placeable_mask = env.compute_placeable_mask();
 
-    std::vector<std::vector<int>> dist(h, std::vector<int>(w, 1000000000));
-    std::vector<std::pair<int, int>> queue;
-    int head = 0;
-
-    dist[env.base_y()][env.base_x()] = 0;
-    queue.push_back({env.base_x(), env.base_y()});
-
-    const int dx[] = {0, 1, 0, -1};
-    const int dy[] = {1, 0, -1, 0};
-
-    while (head < static_cast<int>(queue.size())) {
-        auto [cx, cy] = queue[head++];
-        for (int i = 0; i < 4; ++i) {
-            int nx = cx + dx[i];
-            int ny = cy + dy[i];
-            if (nx >= 0 && nx < w && ny >= 0 && ny < h && env.grid()[ny][nx] == 0) {
-                if (dist[ny][nx] > dist[cy][cx] + 1) {
-                    dist[ny][nx] = dist[cy][cx] + 1;
-                    queue.push_back({nx, ny});
-                }
-            }
-        }
-    }
-
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
+            int cell = cell_id(x, y);
             if (placeable_mask[y][x]) {
                 at(CH_PLACEABLE_MASK, y, x) = 1.0f;
             }
-            if (dist[y][x] < 1000000000) {
-                at(CH_DISTANCE_TO_BASE, y, x) = static_cast<float>(dist[y][x]) / 20.0f;
+            int dist = env.distance_to_base_cell(cell);
+            if (dist < 1000000000) {
+                at(CH_DISTANCE_TO_BASE, y, x) = static_cast<float>(dist) / 20.0f;
             }
         }
     }
