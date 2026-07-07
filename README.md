@@ -56,6 +56,17 @@ The current direction is to move the old Python prototype toward a fast C++ engi
   - Validation PASS: normal CTest `5/5` passed, Torch CTest `8/8` passed.
   - Latest benchmark: normal `bench_engine` about 354k steps/s, Torch `bench_engine` about 359k steps/s; `bench_mcts` remains about 61k-62k simulations/s.
 
+- Phase 4.2K: golden trace semantic lock
+  - Added deterministic golden trace infrastructure with fixed seeds and fixed action scripts.
+  - Added `test_golden_trace` as a semantic lock test with fixed expected hashes.
+  - Added `export_golden_traces` app to export JSONL traces and hash summaries.
+  - Locked cases:
+    - `wait_only_seed0`: `0x385b69812eea12a1`, 16 steps.
+    - `mixed_build_seed1`: `0xf16bcd753375ebc1`, 10 steps.
+    - `invalid_and_slow_seed42`: `0xd142454b6573e9d4`, 10 steps.
+    - combined hash: `0x595648689a6a7435`.
+  - Validation PASS: normal CTest `6/6` passed, Torch CTest `9/9` passed.
+
 ## Current gameplay rules
 
 - Board size: fixed 11x11.
@@ -126,6 +137,7 @@ Normal build should include:
 - `test_engine`
 - `test_board_tables`
 - `test_game_logic`
+- `test_golden_trace`
 - `test_mcts`
 - `test_selfplay`
 
@@ -165,10 +177,11 @@ Benchmarks:
 .\build_torch\Release\bench_mcts.exe
 ```
 
-Latest local validation after the full table/path optimization pass:
+Latest local validation after golden trace semantic lock:
 
-- Normal CTest: `5/5` passed.
-- Torch CTest: `8/8` passed.
+- Normal CTest: `6/6` passed.
+- Torch CTest: `9/9` passed.
+- Golden trace combined hash: `0x595648689a6a7435`.
 - `bench_engine`: `354620` steps/s.
 - Torch `bench_engine`: `359361` steps/s.
 - `bench_mcts`: `62427.5` simulations/s.
@@ -187,6 +200,7 @@ Implemented:
 - Placeable-mask recomputation via one spawn-base cut-cell DFS instead of per-cell pathfinding.
 - Legal-actions cache keyed by `grid_version`, `tower_version`, and `money_version`.
 - Observation distance-to-base reuse through the engine distance cache.
+- Golden trace semantic lock with fixed hashes.
 - Perf counters:
   - `pathfind_calls`
   - `placeable_recompute`
@@ -204,17 +218,9 @@ Not yet implemented:
 
 When a phase is completed and validated, record the completed work, validation result, and latest benchmark/test result in this README before moving to the next phase.
 
+If the user reports that tests passed without details, treat the phase as validated by default and update this README accordingly.
+
 ## Next optimization plan
-
-### Phase 4.2K: golden trace semantic lock
-
-Before further engine changes, freeze several canonical traces:
-
-- fixed seeds such as `0`, `1`, and `42`
-- fixed action scripts
-- per-step money, base HP, wave, time, tower count, enemy count, legal action count, reward, done flag
-
-Future optimization passes should preserve these traces unless a gameplay rule is intentionally changed.
 
 ### Phase 4.2I: tower attack acceleration
 
