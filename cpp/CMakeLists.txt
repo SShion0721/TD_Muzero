@@ -16,6 +16,7 @@ set_property(TARGET tdmz_core PROPERTY CXX_STANDARD 17)
 
 if(TDMZ_ENABLE_TORCH)
     find_package(Torch REQUIRED)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
     file(GLOB NN_SRC "src/nn/*.cpp")
     add_library(tdmz_nn ${NN_SRC})
     target_include_directories(tdmz_nn PUBLIC include)
