@@ -51,6 +51,13 @@ void test_place_upgrade_sell_economy() {
     CHECK_TRUE(env.towers().empty());
 }
 
+void test_tower_upgrade_caps_at_level_five() {
+    Tower tower(0, 0, TowerType::Basic);
+    for (int i = 0; i < 20; ++i) tower.upgrade();
+    CHECK_TRUE(tower.level == kTowerMaxLevel);
+    CHECK_TRUE(!tower.can_upgrade());
+}
+
 void test_invalid_action_penalty() {
     TDEngine env(11, 11, 0);
     int upgrade_empty = encode_action(Action{ActionType::Upgrade, 0, 0, 1});
@@ -109,16 +116,39 @@ void test_build_legality_basics() {
     CHECK_TRUE(!env.can_place_tower(1, 1, TowerType::Basic));
 }
 
+void test_placeable_and_legal_actions_are_cached() {
+    TDEngine env(11, 11, 0);
+    env.reset_perf_counters();
+
+    auto mask1 = env.compute_placeable_mask();
+    auto mask2 = env.compute_placeable_mask();
+    CHECK_TRUE(mask1 == mask2);
+    CHECK_TRUE(env.perf_counters().placeable_recompute == 1);
+
+    auto legal1 = env.legal_actions();
+    auto legal2 = env.legal_actions();
+    CHECK_TRUE(legal1 == legal2);
+    CHECK_TRUE(env.perf_counters().legal_recompute == 1);
+
+    CHECK_TRUE(env.place_tower(1, 1, TowerType::Basic));
+    auto legal3 = env.legal_actions();
+    CHECK_TRUE(!legal3.empty());
+    CHECK_TRUE(env.perf_counters().legal_recompute == 2);
+    CHECK_TRUE(env.perf_counters().placeable_recompute == 2);
+}
+
 int main() {
     test_constructor_rejects_non_11x11();
     test_path_on_empty_grid();
     test_place_upgrade_sell_economy();
+    test_tower_upgrade_caps_at_level_five();
     test_invalid_action_penalty();
     test_spawn_and_enemy_movement();
     test_base_takes_damage_without_towers();
     test_sniper_shoots_and_enters_cooldown();
     test_slow_tower_applies_slow();
     test_build_legality_basics();
+    test_placeable_and_legal_actions_are_cached();
     std::cout << "Game logic tests passed!" << std::endl;
     return 0;
 }
