@@ -27,29 +27,49 @@ void test_empty_defense_has_leak_cap() {
     CHECK_CLOSE(r.leak_hp_cap, 990.0f, 1e-5f);
     CHECK_CLOSE(r.allowed_attack_hp, 891.0f, 1e-5f);
     CHECK_TRUE(r.placeable_count > 0);
+    CHECK_TRUE(r.path_len > 0);
 }
 
-void test_current_tower_cap_increases() {
+void test_path_tower_cap_increases() {
     TDEngine empty(11, 11, 0);
     DefenseCapacityConfig cfg;
     cfg.include_spendable_money = false;
     auto r0 = estimate_defense_capacity(empty, cfg);
 
     TDEngine basic(11, 11, 0);
-    CHECK_TRUE(basic.place_tower(1, 1, TowerType::Basic));
+    CHECK_TRUE(basic.place_tower(1, 4, TowerType::Basic));
     auto r1 = estimate_defense_capacity(basic, cfg);
     CHECK_TRUE(r1.current_tower_damage_cap > r0.current_tower_damage_cap);
     CHECK_TRUE(r1.allowed_attack_hp > r0.allowed_attack_hp);
+    CHECK_TRUE(r1.path_coverage_factor_sum > 0.0f);
 }
 
-void test_sniper_cap_beats_basic() {
+void test_off_path_tower_is_discounted() {
+    TDEngine env(11, 11, 0);
+    CHECK_TRUE(env.place_tower(1, 1, TowerType::Basic));
+
+    DefenseCapacityConfig path_aware;
+    path_aware.include_spendable_money = false;
+    path_aware.path_aware = true;
+
+    DefenseCapacityConfig static_cfg = path_aware;
+    static_cfg.path_aware = false;
+
+    auto rp = estimate_defense_capacity(env, path_aware);
+    auto rs = estimate_defense_capacity(env, static_cfg);
+    CHECK_TRUE(rs.current_tower_damage_cap > 0.0f);
+    CHECK_TRUE(rp.current_tower_damage_cap < rs.current_tower_damage_cap);
+    CHECK_CLOSE(rp.current_tower_damage_cap, 0.0f, 1e-5f);
+}
+
+void test_sniper_cap_beats_basic_on_path() {
     DefenseCapacityConfig cfg;
     cfg.include_spendable_money = false;
 
     TDEngine basic(11, 11, 0);
     TDEngine sniper(11, 11, 0);
-    CHECK_TRUE(basic.place_tower(1, 1, TowerType::Basic));
-    CHECK_TRUE(sniper.place_tower(1, 1, TowerType::Sniper));
+    CHECK_TRUE(basic.place_tower(1, 4, TowerType::Basic));
+    CHECK_TRUE(sniper.place_tower(1, 4, TowerType::Sniper));
 
     auto rb = estimate_defense_capacity(basic, cfg);
     auto rs = estimate_defense_capacity(sniper, cfg);
@@ -75,7 +95,7 @@ void test_virtual_base_hp_and_safety_factor() {
     CHECK_CLOSE(rhalf.allowed_attack_hp, rh.allowed_attack_hp * 0.5f, 1e-5f);
 }
 
-void test_spendable_money_adds_capacity() {
+void test_path_aware_spendable_money_adds_capacity() {
     TDEngine env(11, 11, 0);
     DefenseCapacityConfig without;
     without.include_spendable_money = false;
@@ -85,9 +105,22 @@ void test_spendable_money_adds_capacity() {
     auto r0 = estimate_defense_capacity(env, without);
     auto r1 = estimate_defense_capacity(env, with);
     CHECK_TRUE(r1.spendable_money_damage_cap > 0.0f);
-    CHECK_TRUE(r1.selected_new_tower_count > 0);
+    CHECK_TRUE(r1.selected_new_tower_count > 0 || r1.selected_upgrade_count > 0);
+    CHECK_TRUE(r1.build_candidate_count > 0);
+    CHECK_TRUE(r1.best_build_value_per_cost > 0.0f);
     CHECK_TRUE(r1.raw_hp_cap > r0.raw_hp_cap);
     CHECK_TRUE(r1.allowed_attack_hp > r0.allowed_attack_hp);
+}
+
+void test_upgrade_candidate_is_detected() {
+    TDEngine env(11, 11, 0);
+    CHECK_TRUE(env.place_tower(1, 4, TowerType::Basic));
+    DefenseCapacityConfig cfg;
+    cfg.include_spendable_money = true;
+    cfg.include_upgrade_candidates = true;
+    auto r = estimate_defense_capacity(env, cfg);
+    CHECK_TRUE(r.upgrade_candidate_count > 0);
+    CHECK_TRUE(r.best_upgrade_value_per_cost > 0.0f);
 }
 
 void test_negative_free_result() {
@@ -106,10 +139,12 @@ void test_negative_free_result() {
 
 int main() {
     test_empty_defense_has_leak_cap();
-    test_current_tower_cap_increases();
-    test_sniper_cap_beats_basic();
+    test_path_tower_cap_increases();
+    test_off_path_tower_is_discounted();
+    test_sniper_cap_beats_basic_on_path();
     test_virtual_base_hp_and_safety_factor();
-    test_spendable_money_adds_capacity();
+    test_path_aware_spendable_money_adds_capacity();
+    test_upgrade_candidate_is_detected();
     test_negative_free_result();
     std::cout << "Defense capacity tests passed!" << std::endl;
     return 0;
