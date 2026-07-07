@@ -41,6 +41,7 @@ public:
 
     std::array<std::array<bool, kBoardW>, kBoardH> compute_placeable_mask() const;
     std::vector<std::pair<int,int>> find_path(int sx, int sy, int ex, int ey) const;
+    int distance_to_base_cell(int cell) const;
 
     const std::vector<Tower>& towers() const { return towers_; }
     const std::vector<Enemy>& enemies() const { return enemies_; }
