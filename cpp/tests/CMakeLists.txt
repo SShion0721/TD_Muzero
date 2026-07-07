@@ -22,6 +22,10 @@ add_executable(test_attack_budget test_attack_budget.cpp)
 target_link_libraries(test_attack_budget tdmz_core)
 add_test(NAME test_attack_budget COMMAND test_attack_budget)
 
+add_executable(test_budgeted_wave_generator test_budgeted_wave_generator.cpp)
+target_link_libraries(test_budgeted_wave_generator tdmz_core)
+add_test(NAME test_budgeted_wave_generator COMMAND test_budgeted_wave_generator)
+
 add_executable(test_mcts test_mcts.cpp)
 target_link_libraries(test_mcts tdmz_core)
 add_test(NAME test_mcts COMMAND test_mcts)
