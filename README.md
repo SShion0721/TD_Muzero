@@ -53,6 +53,8 @@ The current direction is to move the old Python prototype toward a fast C++ engi
   - `compute_placeable_mask()` now uses one DFS/Tarjan-style spawn-base cut-cell pass instead of testing every empty cell with a separate pathfind.
   - `legal_actions()` now uses precomputed action ids instead of recomputing flat ids.
   - Added `test_board_tables` for bitboard, geometry, action table, range mask, and BFS regression checks.
+  - Validation PASS: normal CTest `5/5` passed, Torch CTest `8/8` passed.
+  - Latest benchmark: normal `bench_engine` about 354k steps/s, Torch `bench_engine` about 359k steps/s; `bench_mcts` remains about 61k-62k simulations/s.
 
 ## Current gameplay rules
 
@@ -158,13 +160,20 @@ Benchmarks:
 .\build\Release\bench_engine.exe
 .\build\Release\bench_mcts.exe
 .\build\Release\generate_selfplay_dummy.exe
+
+.\build_torch\Release\bench_engine.exe
+.\build_torch\Release\bench_mcts.exe
 ```
 
-Recent local result after the first cache pass:
+Latest local validation after the full table/path optimization pass:
 
-- `bench_engine`: about 4.6k-4.7k steps/s.
-- `bench_mcts`: about 62k-63k simulations/s.
-- Dummy self-play still plays poorly by design, because the dummy network is not a trained defender.
+- Normal CTest: `5/5` passed.
+- Torch CTest: `8/8` passed.
+- `bench_engine`: `354620` steps/s.
+- Torch `bench_engine`: `359361` steps/s.
+- `bench_mcts`: `62427.5` simulations/s.
+- Torch `bench_mcts`: `61515.4` simulations/s.
+- `generate_selfplay_dummy`: `steps=58`, `total_reward=-2150`.
 
 ## Current optimization state
 
@@ -191,7 +200,21 @@ Not yet implemented:
 - Defense capacity / attack budget rules.
 - Debug GUI / trace viewer.
 
+## Engineering rule
+
+When a phase is completed and validated, record the completed work, validation result, and latest benchmark/test result in this README before moving to the next phase.
+
 ## Next optimization plan
+
+### Phase 4.2K: golden trace semantic lock
+
+Before further engine changes, freeze several canonical traces:
+
+- fixed seeds such as `0`, `1`, and `42`
+- fixed action scripts
+- per-step money, base HP, wave, time, tower count, enemy count, legal action count, reward, done flag
+
+Future optimization passes should preserve these traces unless a gameplay rule is intentionally changed.
 
 ### Phase 4.2I: tower attack acceleration
 
