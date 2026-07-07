@@ -12,7 +12,7 @@ void write_vector(std::ostream& out, const std::vector<T>& values) {
     out << "[";
     for (size_t i = 0; i < values.size(); ++i) {
         if (i) out << ",";
-        out << values[i];
+        out << +values[i];
     }
     out << "]";
 }
