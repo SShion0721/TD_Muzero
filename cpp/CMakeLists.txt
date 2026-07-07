@@ -38,6 +38,9 @@ target_link_libraries(export_defense_capacity tdmz_core)
 add_executable(export_attack_budget apps/export_attack_budget.cpp)
 target_link_libraries(export_attack_budget tdmz_core)
 
+add_executable(export_budgeted_wave apps/export_budgeted_wave.cpp)
+target_link_libraries(export_budgeted_wave tdmz_core)
+
 add_executable(bench_engine apps/bench_engine.cpp)
 target_link_libraries(bench_engine tdmz_core)
 
