@@ -181,6 +181,8 @@ std::vector<std::pair<int,int>> TDEngine::path_to_base_from_cell(int start_cell)
             return {};
         }
         cur = best;
+    } else {
+        cur = cached_next_to_base_[cur];
     }
 
     std::vector<std::pair<int,int>> path;
