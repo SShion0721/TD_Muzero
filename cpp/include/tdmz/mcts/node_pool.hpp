@@ -7,11 +7,14 @@ namespace tdmz {
 
 class NodePool {
 public:
-    explicit NodePool(int reserve_nodes = 4096) {
-        nodes_.reserve(reserve_nodes);
+    explicit NodePool(int max_nodes = 4096) : max_nodes_(max_nodes) {
+        nodes_.reserve(max_nodes);
     }
 
     int allocate() {
+        if (static_cast<int>(nodes_.size()) >= max_nodes_) {
+            throw std::runtime_error("NodePool exhausted");
+        }
         nodes_.push_back(Node{});
         return static_cast<int>(nodes_.size()) - 1;
     }
@@ -33,6 +36,7 @@ public:
     }
 
 private:
+    int max_nodes_;
     std::vector<Node> nodes_;
 };
 

@@ -16,12 +16,13 @@ RootSearchOutput MCTS::search_single(
     MinMaxStats minmax(cfg_.value_delta_max);
 
     int root_id = pool.allocate();
-    Node& root = pool.get(root_id);
 
     auto init_out = net.initial_inference({observation});
-    float root_value = init_out.values[0];
     
     expand_node(pool, root_id, -1, -1, 0.0f, 1.0f, legal_actions, init_out.policy_logits[0]);
+
+    SearchDebugStats debug;
+    debug.max_root_branching = static_cast<int>(legal_actions.size());
 
     for (int sim = 0; sim < cfg_.num_simulations; ++sim) {
         int current = root_id;
@@ -37,7 +38,7 @@ RootSearchOutput MCTS::search_single(
 
         EvalInput eval_in;
         eval_in.batch_size = 1;
-        eval_in.latent_ids = {leaf.parent}; 
+        eval_in.parent_node_ids = {leaf.parent};
         eval_in.actions = {leaf.action_from_parent};
         
         auto rec_out = net.recurrent_inference(eval_in);
@@ -46,13 +47,22 @@ RootSearchOutput MCTS::search_single(
         float reward = rec_out.rewards[0];
 
         auto topk_actions = select_topk_candidates(rec_out.policy_logits[0], cfg_.latent_top_k);
+
+        // Track latent branching factor
+        debug.max_latent_branching = std::max(
+            debug.max_latent_branching, static_cast<int>(topk_actions.size()));
+
         expand_node(pool, current, leaf.parent, leaf.action_from_parent, reward, leaf.prior, topk_actions, rec_out.policy_logits[0]);
 
         backup(pool, search_path, value, minmax);
     }
 
+    debug.total_nodes = pool.size();
+
     RootSearchOutput out;
-    out.root_value = root_value;
+    // Use search-after root value, NOT the raw initial_inference value
+    out.root_value = pool.get(root_id).value();
+    out.debug = debug;
     
     int best_action = -1;
     int best_visit_count = -1;
