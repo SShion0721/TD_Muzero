@@ -1,8 +1,7 @@
 #include "tdmz/core/pathfinding.hpp"
-#include <queue>
-#include <tuple>
-#include <map>
+#include "tdmz/core/board_tables.hpp"
 #include <algorithm>
+#include <array>
 
 namespace tdmz {
 
@@ -10,56 +9,64 @@ std::vector<std::pair<int, int>> find_shortest_path(
     int start_x, int start_y, int end_x, int end_y,
     const std::array<std::array<int, kBoardW>, kBoardH>& grid
 ) {
-    using Node = std::pair<int, int>;
-    using PQElement = std::pair<int, Node>;
+    if (!valid_cell_xy(start_x, start_y) || !valid_cell_xy(end_x, end_y)) {
+        return {};
+    }
 
-    std::priority_queue<PQElement, std::vector<PQElement>, std::greater<PQElement>> open_set;
-    std::map<Node, Node> came_from;
-    
-    std::array<std::array<int, kBoardW>, kBoardH> g_score;
-    for (auto& row : g_score) row.fill(1000000000);
-    
-    open_set.push({manhattan(start_x, start_y, end_x, end_y), {start_x, start_y}});
-    g_score[start_y][start_x] = 0;
+    const auto& tables = board_tables();
+    const int start = cell_id(start_x, start_y);
+    const int goal = cell_id(end_x, end_y);
 
-    const int dx[] = {0, 1, 0, -1};
-    const int dy[] = {1, 0, -1, 0};
+    if (start == goal) {
+        return {};
+    }
 
-    while (!open_set.empty()) {
-        auto [current_f, current] = open_set.top();
-        open_set.pop();
+    constexpr int INF = 1000000000;
+    std::array<int, kCells> dist;
+    std::array<int, kCells> parent;
+    std::array<int, kCells> queue;
+    dist.fill(INF);
+    parent.fill(-1);
 
-        if (current.first == end_x && current.second == end_y) {
-            std::vector<Node> path;
-            auto curr = current;
-            while (came_from.count(curr)) {
-                path.push_back(curr);
-                curr = came_from[curr];
+    int head = 0;
+    int tail = 0;
+    queue[tail++] = start;
+    dist[start] = 0;
+
+    while (head < tail) {
+        int cur = queue[head++];
+        if (cur == goal) break;
+
+        int cnt = tables.neighbor4_count[cur];
+        for (int i = 0; i < cnt; ++i) {
+            int next = tables.neighbors4[cur][i];
+            int nx = tables.x[next];
+            int ny = tables.y[next];
+
+            if (grid[ny][nx] != 0 && next != goal) {
+                continue;
             }
-            std::reverse(path.begin(), path.end());
-            return path;
-        }
-
-        int cx = current.first;
-        int cy = current.second;
-
-        for (int i = 0; i < 4; ++i) {
-            int nx = cx + dx[i];
-            int ny = cy + dy[i];
-
-            if (nx >= 0 && nx < kBoardW && ny >= 0 && ny < kBoardH && grid[ny][nx] == 0) {
-                int tentative_g = g_score[cy][cx] + 1;
-                if (tentative_g < g_score[ny][nx]) {
-                    came_from[{nx, ny}] = current;
-                    g_score[ny][nx] = tentative_g;
-                    int f = tentative_g + manhattan(nx, ny, end_x, end_y);
-                    open_set.push({f, {nx, ny}});
-                }
+            if (dist[next] != INF) {
+                continue;
             }
+            dist[next] = dist[cur] + 1;
+            parent[next] = cur;
+            queue[tail++] = next;
         }
     }
 
-    return {}; // Empty means no path
+    if (dist[goal] == INF) {
+        return {};
+    }
+
+    std::vector<std::pair<int, int>> path;
+    int cur = goal;
+    while (cur != start && cur >= 0) {
+        path.push_back({tables.x[cur], tables.y[cur]});
+        cur = parent[cur];
+    }
+    std::reverse(path.begin(), path.end());
+    return path;
 }
 
 } // namespace tdmz
