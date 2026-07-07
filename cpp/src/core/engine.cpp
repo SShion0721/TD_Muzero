@@ -379,9 +379,7 @@ StepResult TDEngine::step_time(float dt) {
     }
 
     for (auto& tower : towers_) {
-        float old_cooldown = tower.cooldown;
         tower.step(dt);
-        if (tower.cooldown != old_cooldown) mark_towers_changed();
         if (tower.can_shoot()) {
             Enemy* best_target = nullptr;
             float best_dist = 1e9f;
@@ -409,7 +407,6 @@ StepResult TDEngine::step_time(float dt) {
                     enemies_changed = true;
                 }
                 tower.shoot();
-                mark_towers_changed();
             }
         }
     }
