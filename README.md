@@ -96,6 +96,22 @@ The current direction is to move the old Python prototype toward a fast C++ engi
     - `path_basic_sniper_seed0`: current `460`, static `460`, spendable `150`, raw `1600`, allowed `1440`, upgrade candidates `2`.
     - `static_path_basic_sniper_seed0`: current `460`, spendable `150`, raw `1600`, allowed `1440`, build candidates `468`, showing the static mode keeps many more candidate cells than path-aware mode.
 
+- Phase 4.3C: AttackBudget API
+  - Added `AttackBudgetConfig`, `AttackBudgetResult`, and `estimate_attack_budget()`.
+  - Wraps DefenseCapacity into a next-wave attack HP budget.
+  - Adds a wave-stage cap: `wave_base_hp + wave_linear_hp * wave + wave_quadratic_hp * wave^2`.
+  - Final `allowed_attack_hp` is the minimum of defense-derived capacity and the wave-stage cap when wave cap is enabled.
+  - Adds archetype ratio caps for regular, fast, tank, and boss budgets.
+  - Adds tank unlock and boss unlock rules; boss is restricted to odd waves by default.
+  - Added `test_attack_budget` and `export_attack_budget`.
+  - Validation PASS: normal CTest `8/8` passed, Torch CTest `11/11` passed.
+  - Latest `export_attack_budget` output:
+    - `empty_seed0`: defense `1431`, wave cap `515`, allowed `515`, fast cap `180.25`, tank/boss locked.
+    - `path_basic_seed0`: defense `1440`, wave cap `515`, allowed `515`, fast cap `180.25`, tank/boss locked.
+    - `path_basic_sniper_seed0`: defense `1440`, wave cap `515`, allowed `515`, fast cap `180.25`, tank/boss locked.
+    - `unclamped_path_basic_sniper_seed0`: defense `1440`, allowed `1440`, fast cap `504`, tank/boss locked.
+    - `low_virtual_base_seed0`: defense `711`, allowed `711` with wave cap disabled, showing virtual-base leak cap affects the budget.
+
 ## Current gameplay rules
 
 - Board size: fixed 11x11.
@@ -168,6 +184,7 @@ Normal build should include:
 - `test_game_logic`
 - `test_golden_trace`
 - `test_defense_capacity`
+- `test_attack_budget`
 - `test_mcts`
 - `test_selfplay`
 
@@ -204,22 +221,23 @@ Benchmarks and exports:
 .\build\Release\generate_selfplay_dummy.exe
 .\build\Release\export_golden_traces.exe golden_trace_current.jsonl
 .\build\Release\export_defense_capacity.exe
+.\build\Release\export_attack_budget.exe
 
 .\build_torch\Release\bench_engine.exe
 .\build_torch\Release\bench_mcts.exe
 ```
 
-Latest local validation after DefenseCapacity 4.3B:
+Latest local validation after AttackBudget 4.3C:
 
-- Normal CTest: `7/7` passed.
-- Torch CTest: `10/10` passed.
+- Normal CTest: `8/8` passed.
+- Torch CTest: `11/11` passed.
 - Golden trace combined hash: `0x595648689a6a7435`.
 - `bench_engine`: `354620` steps/s.
 - Torch `bench_engine`: `359361` steps/s.
 - `bench_mcts`: `62427.5` simulations/s.
 - Torch `bench_mcts`: `61515.4` simulations/s.
 - `generate_selfplay_dummy`: `steps=58`, `total_reward=-2150`.
-- `export_defense_capacity`: off-path Basic is discounted from static `160` to current `0`; path-aware build candidates are reduced from `468` static candidates to `288-296` useful path candidates in the shown cases.
+- `export_attack_budget`: wave-1 default budget is capped to `515` HP; unclamped Basic+Sniper budget is `1440`; low virtual-base unclamped budget is `711`.
 
 ## Current optimization state
 
@@ -236,6 +254,7 @@ Implemented:
 - Golden trace semantic lock with fixed hashes.
 - Static DefenseCapacity estimator with current tower damage, spendable-money damage, virtual-base leak cap, raw HP cap, and allowed attack HP.
 - Path-aware greedy DefenseCapacity with path bitboard coverage, static/current differential diagnostics, and build/upgrade candidate gain-per-cost selection.
+- AttackBudget API with wave-stage cap, enemy archetype ratio caps, tank unlock, and boss unlock rules.
 - Perf counters:
   - `pathfind_calls`
   - `placeable_recompute`
@@ -244,7 +263,8 @@ Implemented:
 
 Not yet implemented:
 
-- Attack budget integration into actual wave / attacker generation.
+- Attacker generation under AttackBudget.
+- Integration of budget-generated waves into engine wave spawning.
 - Multi-upgrade lookahead or sequential candidate refresh after a chosen upgrade.
 - Exact tower attack acceleration using range masks and enemy cell buckets.
 - Observation full static-channel cache.
@@ -258,21 +278,6 @@ If the user reports that tests passed without details, treat the phase as valida
 
 ## Next optimization plan
 
-### Phase 4.3C: attack budget API
-
-Turn DefenseCapacity into an explicit attack budget interface:
-
-```text
-AllowedAttackHP <= DefenseDamageCap + LeakCap
-```
-
-First integration:
-
-- Given current `TDEngine`, return `allowed_attack_hp` for the next wave.
-- Add clamps by wave index so early waves cannot receive late-game monster quality.
-- Add tests that increasing defense increases attack budget and lowering virtual base HP lowers budget.
-- Keep 4.3A/4.3B diagnostics available for GUI/debug and balancing.
-
 ### Phase 4.3D: attacker generation under budget
 
 Use the attack budget to generate a bounded enemy set:
@@ -281,6 +286,15 @@ Use the attack budget to generate a bounded enemy set:
 - Assign budget across regular / swarm / tank / boss archetypes.
 - Clamp special enemies by unlock wave and ratio limits.
 - Add deterministic tests for budget non-overflow and monotonic scaling with defense capacity.
+- Keep generated enemy specs separate from the current fixed `get_wave_enemies()` until the generator is validated.
+
+### Phase 4.3E: engine integration switch for budget-generated waves
+
+After the standalone generator is validated:
+
+- Add a config or feature flag for budget-generated waves.
+- Keep current fixed PvE wave generation as the default baseline until A/B validation.
+- Add golden-trace-safe tests so existing fixed-wave behavior remains unchanged unless the feature flag is enabled.
 
 ### Phase 4.2I: tower attack acceleration
 
