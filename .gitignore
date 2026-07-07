@@ -21,3 +21,4 @@ trace_*.json
 crash.txt
 out.txt
 test_python_hp.py
+*.pdf
