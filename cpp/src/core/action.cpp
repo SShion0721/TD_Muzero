@@ -4,7 +4,19 @@
 
 namespace tdmz {
 
+namespace {
+void validate_cell(int x, int y) {
+    if (x < 0 || x >= kBoardW || y < 0 || y >= kBoardH) {
+        throw std::invalid_argument("Action cell out of bounds");
+    }
+}
+}
+
 Action decode_action(int id) {
+    if (id < 0 || id >= kActionSpaceSize) {
+        throw std::invalid_argument("Invalid flat action id");
+    }
+
     Action a;
     a.flat_id = id;
 
@@ -36,11 +48,6 @@ Action decode_action(int id) {
         return a;
     }
 
-    int wait_id = id - kFlatWaitOffset;
-    if (wait_id != 0) {
-        throw std::invalid_argument("Invalid flat action id");
-    }
-    
     a.type = ActionType::Wait1;
     a.wait_steps = 1;
     a.x = -1;
@@ -50,25 +57,27 @@ Action decode_action(int id) {
 
 int encode_action(const Action& a) {
     if (is_build(a.type)) {
+        validate_cell(a.x, a.y);
         return static_cast<int>(a.type) * kCells + a.y * kBoardW + a.x;
     }
     if (a.type == ActionType::Upgrade) {
+        validate_cell(a.x, a.y);
         return kFlatUpgradeOffset + a.y * kBoardW + a.x;
     }
     if (a.type == ActionType::Sell) {
+        validate_cell(a.x, a.y);
         return kFlatSellOffset + a.y * kBoardW + a.x;
     }
-    
-    // Wait actions
-    if (a.type == ActionType::Wait1) return kFlatWaitOffset + 0;
-    
+    if (a.type == ActionType::Wait1) {
+        return kFlatWaitOffset;
+    }
     throw std::invalid_argument("Invalid action type for encoding");
 }
 
 bool is_build(ActionType t) {
-    return t == ActionType::BuildBasic || 
-           t == ActionType::BuildSniper || 
-           t == ActionType::BuildAOE || 
+    return t == ActionType::BuildBasic ||
+           t == ActionType::BuildSniper ||
+           t == ActionType::BuildAOE ||
            t == ActionType::BuildSlow;
 }
 
