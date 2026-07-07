@@ -8,7 +8,7 @@ option(TDMZ_ENABLE_TORCH "Build LibTorch network components" OFF)
 
 include_directories(include)
 
-file(GLOB CORE_SRC "src/core/*.cpp" "src/mcts/*.cpp" "src/selfplay/*.cpp")
+file(GLOB CORE_SRC "src/core/*.cpp" "src/mcts/*.cpp" "src/selfplay/*.cpp" "src/balance/*.cpp")
 add_library(tdmz_core ${CORE_SRC})
 target_include_directories(tdmz_core PUBLIC include)
 set_property(TARGET tdmz_core PROPERTY CXX_STANDARD 17)
@@ -31,6 +31,9 @@ target_link_libraries(export_cpp_trace tdmz_core)
 
 add_executable(export_golden_traces apps/export_golden_traces.cpp)
 target_link_libraries(export_golden_traces tdmz_core)
+
+add_executable(export_defense_capacity apps/export_defense_capacity.cpp)
+target_link_libraries(export_defense_capacity tdmz_core)
 
 add_executable(bench_engine apps/bench_engine.cpp)
 target_link_libraries(bench_engine tdmz_core)
