@@ -1,10 +1,16 @@
 #include "tdmz/core/engine.hpp"
 #include "tdmz/core/pathfinding.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <functional>
 #include <stdexcept>
 
 namespace tdmz {
+
+namespace {
+constexpr int kInf = 1000000000;
+}
 
 TDEngine::TDEngine(int width, int height, uint64_t seed)
     : width_(width), height_(height),
@@ -20,12 +26,14 @@ TDEngine::TDEngine(int width, int height, uint64_t seed)
 void TDEngine::invalidate_all_caches() {
     placeable_cache_valid_ = false;
     legal_cache_valid_ = false;
+    base_distance_cache_valid_ = false;
 }
 
 void TDEngine::mark_grid_changed() {
     ++grid_version_;
     placeable_cache_valid_ = false;
     legal_cache_valid_ = false;
+    base_distance_cache_valid_ = false;
 }
 
 void TDEngine::mark_towers_changed() {
@@ -56,6 +64,7 @@ void TDEngine::reset(uint64_t seed) {
     for (auto& row : grid_) {
         row.fill(0);
     }
+    bb_blocked_ = Bitboard128::zero();
 
     towers_.clear();
     enemies_.clear();
@@ -107,8 +116,92 @@ std::vector<EnemySpec> TDEngine::get_wave_enemies() {
     return format;
 }
 
+void TDEngine::recompute_base_distance_cache() const {
+    if (base_distance_cache_valid_ && base_distance_grid_version_ == grid_version_) {
+        return;
+    }
+
+    ++perf_.base_distance_recompute;
+    const auto& tables = board_tables();
+    cached_base_distance_.fill(kInf);
+    cached_next_to_base_.fill(-1);
+
+    std::array<int, kCells> queue;
+    int head = 0;
+    int tail = 0;
+
+    const int base = cell_id(base_x_, base_y_);
+    cached_base_distance_[base] = 0;
+    queue[tail++] = base;
+
+    while (head < tail) {
+        int cur = queue[head++];
+        int cnt = tables.neighbor4_count[cur];
+        for (int i = 0; i < cnt; ++i) {
+            int next = tables.neighbors4[cur][i];
+            int nx = tables.x[next];
+            int ny = tables.y[next];
+            if (grid_[ny][nx] != 0) {
+                continue;
+            }
+            if (cached_base_distance_[next] != kInf) {
+                continue;
+            }
+            cached_base_distance_[next] = cached_base_distance_[cur] + 1;
+            cached_next_to_base_[next] = cur;
+            queue[tail++] = next;
+        }
+    }
+
+    base_distance_grid_version_ = grid_version_;
+    base_distance_cache_valid_ = true;
+}
+
+std::vector<std::pair<int,int>> TDEngine::path_to_base_from_cell(int start_cell) const {
+    if (!valid_cell(start_cell)) return {};
+    const auto& tables = board_tables();
+    const int base = cell_id(base_x_, base_y_);
+    if (start_cell == base) return {};
+
+    recompute_base_distance_cache();
+
+    int cur = start_cell;
+    if (cached_base_distance_[cur] == kInf) {
+        int best = -1;
+        int best_dist = kInf;
+        int cnt = tables.neighbor4_count[cur];
+        for (int i = 0; i < cnt; ++i) {
+            int next = tables.neighbors4[cur][i];
+            if (cached_base_distance_[next] < best_dist) {
+                best_dist = cached_base_distance_[next];
+                best = next;
+            }
+        }
+        if (best < 0 || best_dist == kInf) {
+            return {};
+        }
+        cur = best;
+    }
+
+    std::vector<std::pair<int,int>> path;
+    while (cur != base && cur >= 0) {
+        path.push_back({tables.x[cur], tables.y[cur]});
+        cur = cached_next_to_base_[cur];
+    }
+    if (cur == base) {
+        path.push_back({base_x_, base_y_});
+    }
+    return path;
+}
+
 std::vector<std::pair<int,int>> TDEngine::find_path(int sx, int sy, int ex, int ey) const {
     ++perf_.pathfind_calls;
+    if (!valid_cell_xy(sx, sy) || !valid_cell_xy(ex, ey)) {
+        return {};
+    }
+    if (ex == base_x_ && ey == base_y_) {
+        return path_to_base_from_cell(cell_id(sx, sy));
+    }
     return find_shortest_path(sx, sy, ex, ey, grid_);
 }
 
@@ -125,12 +218,8 @@ bool TDEngine::can_place_tower(int x, int y, TowerType type) const {
     auto stats = tower_stats(type);
     if (money_ < stats.cost) return false;
 
-    auto temp_grid = grid_;
-    temp_grid[y][x] = 1;
-    ++perf_.pathfind_calls;
-    auto path = find_shortest_path(spawn_x_, spawn_y_, base_x_, base_y_, temp_grid);
-
-    return !path.empty();
+    auto placeable = compute_placeable_mask();
+    return placeable[y][x];
 }
 
 bool TDEngine::place_tower(int x, int y, TowerType type) {
@@ -138,6 +227,7 @@ bool TDEngine::place_tower(int x, int y, TowerType type) {
         auto stats = tower_stats(type);
         money_ -= stats.cost;
         grid_[y][x] = 1;
+        bb_blocked_.set(cell_id(x, y));
         towers_.emplace_back(x, y, type);
 
         mark_money_changed();
@@ -182,6 +272,7 @@ bool TDEngine::sell_tower(int x, int y) {
             money_ += refund;
             towers_.erase(it);
             grid_[y][x] = 0;
+            bb_blocked_.clear(cell_id(x, y));
 
             mark_money_changed();
             mark_grid_changed();
@@ -212,19 +303,57 @@ std::array<std::array<bool, kBoardW>, kBoardH> TDEngine::compute_placeable_mask(
     std::array<std::array<bool, kBoardW>, kBoardH> mask;
     for (auto& row : mask) row.fill(false);
 
-    auto base_path = find_path(spawn_x_, spawn_y_, base_x_, base_y_);
-    if (!base_path.empty()) {
-        for (int y = 0; y < height_; ++y) {
-            for (int x = 0; x < width_; ++x) {
-                if (grid_[y][x] == 0 && (x != spawn_x_ || y != spawn_y_) && (x != base_x_ || y != base_y_)) {
-                    auto temp_grid = grid_;
-                    temp_grid[y][x] = 1;
-                    ++perf_.pathfind_calls;
-                    auto p = find_shortest_path(spawn_x_, spawn_y_, base_x_, base_y_, temp_grid);
-                    if (!p.empty()) {
-                        mask[y][x] = true;
-                    }
+    const auto& tables = board_tables();
+    const int spawn = cell_id(spawn_x_, spawn_y_);
+    const int base = cell_id(base_x_, base_y_);
+
+    std::array<int, kCells> tin;
+    std::array<int, kCells> low;
+    std::array<int, kCells> parent;
+    std::array<bool, kCells> contains_base;
+    std::array<bool, kCells> st_cut;
+    tin.fill(-1);
+    low.fill(0);
+    parent.fill(-1);
+    contains_base.fill(false);
+    st_cut.fill(false);
+
+    int timer = 0;
+    auto is_open = [&](int c) {
+        return grid_[tables.y[c]][tables.x[c]] == 0;
+    };
+
+    std::function<void(int)> dfs = [&](int u) {
+        tin[u] = low[u] = timer++;
+        contains_base[u] = (u == base);
+        int cnt = tables.neighbor4_count[u];
+        for (int i = 0; i < cnt; ++i) {
+            int v = tables.neighbors4[u][i];
+            if (!is_open(v)) continue;
+            if (tin[v] == -1) {
+                parent[v] = u;
+                dfs(v);
+                contains_base[u] = contains_base[u] || contains_base[v];
+                low[u] = std::min(low[u], low[v]);
+                if (u != spawn && u != base && contains_base[v] && low[v] >= tin[u]) {
+                    st_cut[u] = true;
                 }
+            } else if (v != parent[u]) {
+                low[u] = std::min(low[u], tin[v]);
+            }
+        }
+    };
+
+    if (is_open(spawn)) {
+        dfs(spawn);
+    }
+
+    if (tin[base] != -1) {
+        for (int c = 0; c < kCells; ++c) {
+            int x = tables.x[c];
+            int y = tables.y[c];
+            if (grid_[y][x] == 0 && c != spawn && c != base && !st_cut[c]) {
+                mask[y][x] = true;
             }
         }
     }
@@ -245,31 +374,32 @@ std::vector<int> TDEngine::legal_actions() const {
 
     ++perf_.legal_recompute;
 
+    const auto& tables = board_tables();
     std::vector<int> actions;
     auto placeable = compute_placeable_mask();
 
-    for (int t = 0; t < 4; ++t) {
+    for (int t = 0; t < kBuildTypes; ++t) {
         auto type = static_cast<TowerType>(t);
         if (money_ >= tower_stats(type).cost) {
-            for (int y = 0; y < height_; ++y) {
-                for (int x = 0; x < width_; ++x) {
-                    if (placeable[y][x]) {
-                        Action a{static_cast<ActionType>(t), x, y, 1, -1};
-                        actions.push_back(encode_action(a));
-                    }
+            for (int c = 0; c < kCells; ++c) {
+                int x = tables.x[c];
+                int y = tables.y[c];
+                if (placeable[y][x]) {
+                    actions.push_back(tables.build_action[t][c]);
                 }
             }
         }
     }
 
     for (const auto& tower : towers_) {
+        int c = cell_id(tower.x, tower.y);
         if (tower.can_upgrade() && money_ >= tower.upgrade_cost) {
-            actions.push_back(encode_action(Action{ActionType::Upgrade, tower.x, tower.y}));
+            actions.push_back(tables.upgrade_action[c]);
         }
-        actions.push_back(encode_action(Action{ActionType::Sell, tower.x, tower.y}));
+        actions.push_back(tables.sell_action[c]);
     }
 
-    actions.push_back(encode_action(Action{ActionType::Wait1, -1, -1, 1}));
+    actions.push_back(tables.wait_action);
 
     cached_legal_actions_ = actions;
     legal_grid_version_ = grid_version_;
