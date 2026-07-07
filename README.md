@@ -79,6 +79,23 @@ The current direction is to move the old Python prototype toward a fast C++ engi
     - `one_basic_seed0`: current `160`, spendable `450`, leak `990`, raw `1600`, allowed `1440`, placeable `118`, selected `3 x Basic`.
     - `basic_sniper_seed0`: current `460`, spendable `150`, leak `990`, raw `1600`, allowed `1440`, placeable `117`, selected `1 x Basic`.
 
+- Phase 4.3B: path-aware greedy DefenseCapacity
+  - Added current main-path extraction and path bitboard coverage through `Bitboard128`.
+  - Uses `BoardTables::range_mask[type][level][cell] & path_bb` to discount towers that do not cover the current spawn-to-base path.
+  - Keeps static tower capacity as a debug upper-bound field while using path-aware capacity for the actual budget.
+  - Added differential candidate valuation for builds and upgrades:
+    - build gain: path-aware level-1 tower capacity at a placeable cell.
+    - upgrade gain: path-aware upgraded tower capacity minus current tower capacity.
+  - Greedily selects build / upgrade candidates by `cap_gain / cost`, with one build per cell and one upgrade per existing tower in this approximation pass.
+  - Added diagnostics for path length, static/current capacity delta, build/upgrade candidate counts, selected build/upgrade cap, and best value-per-cost.
+  - Validation PASS: normal CTest `7/7` passed, Torch CTest `10/10` passed.
+  - Latest `export_defense_capacity` output:
+    - `empty_seed0`: current `0`, spendable `600`, leak `990`, raw `1590`, allowed `1431`, path_len `10`, build candidates `296`, selected `4 x Basic`.
+    - `off_path_basic_seed0`: current `0`, static `160`, spendable `450`, raw `1440`, allowed `1296`; off-path tower is correctly discounted to zero current capacity.
+    - `one_path_basic_seed0`: current `160`, static `160`, spendable `450`, raw `1600`, allowed `1440`, upgrade candidates `1`.
+    - `path_basic_sniper_seed0`: current `460`, static `460`, spendable `150`, raw `1600`, allowed `1440`, upgrade candidates `2`.
+    - `static_path_basic_sniper_seed0`: current `460`, spendable `150`, raw `1600`, allowed `1440`, build candidates `468`, showing the static mode keeps many more candidate cells than path-aware mode.
+
 ## Current gameplay rules
 
 - Board size: fixed 11x11.
@@ -192,7 +209,7 @@ Benchmarks and exports:
 .\build_torch\Release\bench_mcts.exe
 ```
 
-Latest local validation after DefenseCapacity 4.3A:
+Latest local validation after DefenseCapacity 4.3B:
 
 - Normal CTest: `7/7` passed.
 - Torch CTest: `10/10` passed.
@@ -202,7 +219,7 @@ Latest local validation after DefenseCapacity 4.3A:
 - `bench_mcts`: `62427.5` simulations/s.
 - Torch `bench_mcts`: `61515.4` simulations/s.
 - `generate_selfplay_dummy`: `steps=58`, `total_reward=-2150`.
-- `export_defense_capacity`: `allowed_attack_hp` is `1431` for empty seed0, `1440` for one Basic, and `1440` for Basic+Sniper under the current static greedy money model.
+- `export_defense_capacity`: off-path Basic is discounted from static `160` to current `0`; path-aware build candidates are reduced from `468` static candidates to `288-296` useful path candidates in the shown cases.
 
 ## Current optimization state
 
@@ -218,6 +235,7 @@ Implemented:
 - Observation distance-to-base reuse through the engine distance cache.
 - Golden trace semantic lock with fixed hashes.
 - Static DefenseCapacity estimator with current tower damage, spendable-money damage, virtual-base leak cap, raw HP cap, and allowed attack HP.
+- Path-aware greedy DefenseCapacity with path bitboard coverage, static/current differential diagnostics, and build/upgrade candidate gain-per-cost selection.
 - Perf counters:
   - `pathfind_calls`
   - `placeable_recompute`
@@ -226,8 +244,8 @@ Implemented:
 
 Not yet implemented:
 
-- DefenseCapacity path-aware coverage / active-time model.
 - Attack budget integration into actual wave / attacker generation.
+- Multi-upgrade lookahead or sequential candidate refresh after a chosen upgrade.
 - Exact tower attack acceleration using range masks and enemy cell buckets.
 - Observation full static-channel cache.
 - Debug GUI / trace viewer.
@@ -239,15 +257,6 @@ When a phase is completed and validated, record the completed work, validation r
 If the user reports that tests passed without details, treat the phase as validated by default and update this README accordingly.
 
 ## Next optimization plan
-
-### Phase 4.3B: path-aware DefenseCapacity
-
-Improve the static theoretical estimate by accounting for tower-path interaction:
-
-- Use `BoardTables::range_mask[type][level][cell]` to estimate which path cells each tower covers.
-- Estimate active firing time from covered path cells and enemy traversal time.
-- Cap tower contribution by path coverage instead of assuming every tower can fire continuously for the full wave window.
-- Keep the 4.3A static model as a safe upper-bound/debug baseline.
 
 ### Phase 4.3C: attack budget API
 
@@ -262,6 +271,16 @@ First integration:
 - Given current `TDEngine`, return `allowed_attack_hp` for the next wave.
 - Add clamps by wave index so early waves cannot receive late-game monster quality.
 - Add tests that increasing defense increases attack budget and lowering virtual base HP lowers budget.
+- Keep 4.3A/4.3B diagnostics available for GUI/debug and balancing.
+
+### Phase 4.3D: attacker generation under budget
+
+Use the attack budget to generate a bounded enemy set:
+
+- Convert `allowed_attack_hp` into a wave budget.
+- Assign budget across regular / swarm / tank / boss archetypes.
+- Clamp special enemies by unlock wave and ratio limits.
+- Add deterministic tests for budget non-overflow and monotonic scaling with defense capacity.
 
 ### Phase 4.2I: tower attack acceleration
 
