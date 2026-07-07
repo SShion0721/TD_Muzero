@@ -18,4 +18,8 @@ if(TDMZ_ENABLE_TORCH)
     add_executable(test_mcts_libtorch_smoke test_mcts_libtorch_smoke.cpp)
     target_link_libraries(test_mcts_libtorch_smoke tdmz_nn)
     add_test(NAME test_mcts_libtorch_smoke COMMAND test_mcts_libtorch_smoke)
+
+    add_executable(test_selfplay_torch test_selfplay_libtorch.cpp)
+    target_link_libraries(test_selfplay_torch tdmz_nn)
+    add_test(NAME test_selfplay_torch COMMAND test_selfplay_torch)
 endif()
