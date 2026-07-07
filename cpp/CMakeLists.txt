@@ -8,8 +8,7 @@ option(TDMZ_ENABLE_TORCH "Build LibTorch network components" OFF)
 
 include_directories(include)
 
-# Core Library (No LibTorch Dependency)
-file(GLOB CORE_SRC "src/core/*.cpp" "src/mcts/*.cpp")
+file(GLOB CORE_SRC "src/core/*.cpp" "src/mcts/*.cpp" "src/selfplay/*.cpp")
 add_library(tdmz_core ${CORE_SRC})
 target_include_directories(tdmz_core PUBLIC include)
 set_property(TARGET tdmz_core PROPERTY CXX_STANDARD 17)
@@ -24,11 +23,9 @@ if(TDMZ_ENABLE_TORCH)
     set_property(TARGET tdmz_nn PROPERTY CXX_STANDARD 17)
 endif()
 
-# Tests
 enable_testing()
 add_subdirectory(tests)
 
-# Apps
 add_executable(export_cpp_trace apps/export_cpp_trace.cpp)
 target_link_libraries(export_cpp_trace tdmz_core)
 
@@ -37,3 +34,6 @@ target_link_libraries(bench_engine tdmz_core)
 
 add_executable(bench_mcts apps/bench_mcts.cpp)
 target_link_libraries(bench_mcts tdmz_core)
+
+add_executable(generate_selfplay_dummy apps/generate_selfplay_dummy.cpp)
+target_link_libraries(generate_selfplay_dummy tdmz_core)
