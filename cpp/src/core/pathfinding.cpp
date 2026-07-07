@@ -43,7 +43,7 @@ std::vector<std::pair<int, int>> find_shortest_path(
             int nx = tables.x[next];
             int ny = tables.y[next];
 
-            if (grid[ny][nx] != 0 && next != goal) {
+            if (grid[ny][nx] != 0) {
                 continue;
             }
             if (dist[next] != INF) {
