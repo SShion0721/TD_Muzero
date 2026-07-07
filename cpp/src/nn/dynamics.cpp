@@ -1,4 +1,5 @@
 #include "tdmz/nn/dynamics.hpp"
+#include <vector>
 
 namespace tdmz {
 
