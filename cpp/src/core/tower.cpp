@@ -26,14 +26,19 @@ Tower::Tower(int x, int y, TowerType type) : x(x), y(y), type(type) {
     aoe_radius = stats.aoe_radius;
     slow_factor = stats.slow_factor;
     slow_duration = stats.slow_duration;
-    
+
     cooldown = 0.0f;
     level = 1;
     total_spent = cost;
     upgrade_cost = static_cast<int>(cost * 1.5f);
 }
 
+bool Tower::can_upgrade() const {
+    return level < kTowerMaxLevel;
+}
+
 void Tower::upgrade() {
+    if (level >= kTowerMaxLevel) return;
     level += 1;
     total_spent += upgrade_cost;
     damage *= 1.5f;
