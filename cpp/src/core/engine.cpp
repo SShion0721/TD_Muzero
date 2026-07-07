@@ -2,7 +2,6 @@
 #include "tdmz/core/pathfinding.hpp"
 #include <algorithm>
 #include <cmath>
-#include <iostream>
 #include <stdexcept>
 
 namespace tdmz {
@@ -16,6 +15,35 @@ TDEngine::TDEngine(int width, int height, uint64_t seed)
         throw std::invalid_argument("TDEngine currently supports only 11x11 boards");
     }
     reset(seed);
+}
+
+void TDEngine::invalidate_all_caches() {
+    placeable_cache_valid_ = false;
+    legal_cache_valid_ = false;
+}
+
+void TDEngine::mark_grid_changed() {
+    ++grid_version_;
+    placeable_cache_valid_ = false;
+    legal_cache_valid_ = false;
+}
+
+void TDEngine::mark_towers_changed() {
+    ++tower_version_;
+    legal_cache_valid_ = false;
+}
+
+void TDEngine::mark_money_changed() {
+    ++money_version_;
+    legal_cache_valid_ = false;
+}
+
+void TDEngine::mark_enemies_changed() {
+    ++enemy_version_;
+}
+
+void TDEngine::mark_wave_changed() {
+    ++wave_version_;
 }
 
 void TDEngine::reset(uint64_t seed) {
@@ -38,6 +66,13 @@ void TDEngine::reset(uint64_t seed) {
     spawn_timer_ = 0.0f;
     time_ = 0.0f;
     game_over_ = false;
+
+    ++grid_version_;
+    ++tower_version_;
+    ++money_version_;
+    ++enemy_version_;
+    ++wave_version_;
+    invalidate_all_caches();
 }
 
 std::vector<EnemySpec> TDEngine::get_wave_enemies() {
@@ -73,6 +108,7 @@ std::vector<EnemySpec> TDEngine::get_wave_enemies() {
 }
 
 std::vector<std::pair<int,int>> TDEngine::find_path(int sx, int sy, int ex, int ey) const {
+    ++perf_.pathfind_calls;
     return find_shortest_path(sx, sy, ex, ey, grid_);
 }
 
@@ -91,6 +127,7 @@ bool TDEngine::can_place_tower(int x, int y, TowerType type) const {
 
     auto temp_grid = grid_;
     temp_grid[y][x] = 1;
+    ++perf_.pathfind_calls;
     auto path = find_shortest_path(spawn_x_, spawn_y_, base_x_, base_y_, temp_grid);
 
     return !path.empty();
@@ -103,6 +140,10 @@ bool TDEngine::place_tower(int x, int y, TowerType type) {
         grid_[y][x] = 1;
         towers_.emplace_back(x, y, type);
 
+        mark_money_changed();
+        mark_grid_changed();
+        mark_towers_changed();
+
         for (auto& enemy : enemies_) {
             int curr_grid_x = static_cast<int>(std::round(enemy.x));
             int curr_grid_y = static_cast<int>(std::round(enemy.y));
@@ -111,6 +152,7 @@ bool TDEngine::place_tower(int x, int y, TowerType type) {
                 enemy.set_path(path);
             }
         }
+        if (!enemies_.empty()) mark_enemies_changed();
         return true;
     }
     return false;
@@ -119,9 +161,12 @@ bool TDEngine::place_tower(int x, int y, TowerType type) {
 bool TDEngine::upgrade_tower(int x, int y) {
     for (auto& tower : towers_) {
         if (tower.x == x && tower.y == y) {
+            if (!tower.can_upgrade()) return false;
             if (money_ >= tower.upgrade_cost) {
                 money_ -= tower.upgrade_cost;
                 tower.upgrade();
+                mark_money_changed();
+                mark_towers_changed();
                 return true;
             }
             break;
@@ -138,6 +183,10 @@ bool TDEngine::sell_tower(int x, int y) {
             towers_.erase(it);
             grid_[y][x] = 0;
 
+            mark_money_changed();
+            mark_grid_changed();
+            mark_towers_changed();
+
             for (auto& enemy : enemies_) {
                 int curr_grid_x = static_cast<int>(std::round(enemy.x));
                 int curr_grid_y = static_cast<int>(std::round(enemy.y));
@@ -146,6 +195,7 @@ bool TDEngine::sell_tower(int x, int y) {
                     enemy.set_path(path);
                 }
             }
+            if (!enemies_.empty()) mark_enemies_changed();
             return true;
         }
     }
@@ -153,28 +203,48 @@ bool TDEngine::sell_tower(int x, int y) {
 }
 
 std::array<std::array<bool, kBoardW>, kBoardH> TDEngine::compute_placeable_mask() const {
+    if (placeable_cache_valid_ && placeable_grid_version_ == grid_version_) {
+        return cached_placeable_mask_;
+    }
+
+    ++perf_.placeable_recompute;
+
     std::array<std::array<bool, kBoardW>, kBoardH> mask;
     for (auto& row : mask) row.fill(false);
 
     auto base_path = find_path(spawn_x_, spawn_y_, base_x_, base_y_);
-    if (base_path.empty()) return mask;
-
-    for (int y = 0; y < height_; ++y) {
-        for (int x = 0; x < width_; ++x) {
-            if (grid_[y][x] == 0 && (x != spawn_x_ || y != spawn_y_) && (x != base_x_ || y != base_y_)) {
-                auto temp_grid = grid_;
-                temp_grid[y][x] = 1;
-                auto p = find_shortest_path(spawn_x_, spawn_y_, base_x_, base_y_, temp_grid);
-                if (!p.empty()) {
-                    mask[y][x] = true;
+    if (!base_path.empty()) {
+        for (int y = 0; y < height_; ++y) {
+            for (int x = 0; x < width_; ++x) {
+                if (grid_[y][x] == 0 && (x != spawn_x_ || y != spawn_y_) && (x != base_x_ || y != base_y_)) {
+                    auto temp_grid = grid_;
+                    temp_grid[y][x] = 1;
+                    ++perf_.pathfind_calls;
+                    auto p = find_shortest_path(spawn_x_, spawn_y_, base_x_, base_y_, temp_grid);
+                    if (!p.empty()) {
+                        mask[y][x] = true;
+                    }
                 }
             }
         }
     }
-    return mask;
+
+    cached_placeable_mask_ = mask;
+    placeable_grid_version_ = grid_version_;
+    placeable_cache_valid_ = true;
+    return cached_placeable_mask_;
 }
 
 std::vector<int> TDEngine::legal_actions() const {
+    if (legal_cache_valid_ &&
+        legal_grid_version_ == grid_version_ &&
+        legal_tower_version_ == tower_version_ &&
+        legal_money_version_ == money_version_) {
+        return cached_legal_actions_;
+    }
+
+    ++perf_.legal_recompute;
+
     std::vector<int> actions;
     auto placeable = compute_placeable_mask();
 
@@ -193,14 +263,20 @@ std::vector<int> TDEngine::legal_actions() const {
     }
 
     for (const auto& tower : towers_) {
-        if (money_ >= tower.upgrade_cost) {
+        if (tower.can_upgrade() && money_ >= tower.upgrade_cost) {
             actions.push_back(encode_action(Action{ActionType::Upgrade, tower.x, tower.y}));
         }
         actions.push_back(encode_action(Action{ActionType::Sell, tower.x, tower.y}));
     }
 
     actions.push_back(encode_action(Action{ActionType::Wait1, -1, -1, 1}));
-    return actions;
+
+    cached_legal_actions_ = actions;
+    legal_grid_version_ = grid_version_;
+    legal_tower_version_ = tower_version_;
+    legal_money_version_ = money_version_;
+    legal_cache_valid_ = true;
+    return cached_legal_actions_;
 }
 
 std::vector<uint8_t> TDEngine::legal_action_mask() const {
@@ -259,6 +335,7 @@ StepResult TDEngine::step_time(float dt) {
     if (game_over_) return {0.0f, true};
 
     float step_reward = 0.0f;
+    bool enemies_changed = false;
 
     spawn_timer_ -= dt;
     if (spawn_timer_ <= 0.0f && !enemies_to_spawn_.empty()) {
@@ -272,11 +349,13 @@ StepResult TDEngine::step_time(float dt) {
         enemies_.back().set_path(path);
 
         spawn_timer_ = 1.0f;
+        enemies_changed = true;
     }
 
     std::vector<int> reached_base_ids;
     for (auto& enemy : enemies_) {
         enemy.step(dt);
+        enemies_changed = true;
         if (std::hypot(enemy.x - static_cast<float>(base_x_), enemy.y - static_cast<float>(base_y_)) < 0.2f) {
             reached_base_ids.push_back(enemy.id);
         }
@@ -288,17 +367,21 @@ StepResult TDEngine::step_time(float dt) {
             base_hp_ -= static_cast<int>(it->max_hp) / 10;
             enemies_.erase(it);
             step_reward -= 50.0f;
+            enemies_changed = true;
         }
     }
 
     if (base_hp_ <= 0) {
         game_over_ = true;
+        if (enemies_changed) mark_enemies_changed();
         step_reward -= 1000.0f;
         return {step_reward, true};
     }
 
     for (auto& tower : towers_) {
+        float old_cooldown = tower.cooldown;
         tower.step(dt);
+        if (tower.cooldown != old_cooldown) mark_towers_changed();
         if (tower.can_shoot()) {
             Enemy* best_target = nullptr;
             float best_dist = 1e9f;
@@ -317,13 +400,16 @@ StepResult TDEngine::step_time(float dt) {
                         if (std::hypot(e.x - best_target->x, e.y - best_target->y) <= tower.aoe_radius) {
                             e.hp -= tower.damage;
                             e.apply_slow(tower.slow_factor, tower.slow_duration);
+                            enemies_changed = true;
                         }
                     }
                 } else {
                     best_target->hp -= tower.damage;
                     best_target->apply_slow(tower.slow_factor, tower.slow_duration);
+                    enemies_changed = true;
                 }
                 tower.shoot();
+                mark_towers_changed();
             }
         }
     }
@@ -339,6 +425,8 @@ StepResult TDEngine::step_time(float dt) {
             money_ += it->reward;
             step_reward += it->reward;
             enemies_.erase(it);
+            mark_money_changed();
+            enemies_changed = true;
         }
     }
 
@@ -347,8 +435,10 @@ StepResult TDEngine::step_time(float dt) {
         enemies_to_spawn_ = get_wave_enemies();
         spawn_timer_ = 3.0f;
         step_reward += 100.0f;
+        mark_wave_changed();
     }
 
+    if (enemies_changed) mark_enemies_changed();
     time_ += dt;
     return {step_reward, false};
 }
