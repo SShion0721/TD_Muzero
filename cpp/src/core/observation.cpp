@@ -1,4 +1,5 @@
 #include "tdmz/core/observation.hpp"
+#include <algorithm>
 #include <cmath>
 
 namespace tdmz {
@@ -7,12 +8,11 @@ Observation make_observation_python_parity(const TDEngine& env) {
     int w = env.width();
     int h = env.height();
     Observation obs(5 * h * w, 0.0f);
-    
+
     auto at = [&](int c, int y, int x) -> float& {
         return obs[(c * h + y) * w + x];
     };
-    
-    // Channel 0: Towers
+
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
             if (env.grid()[y][x] == 1) {
@@ -20,38 +20,34 @@ Observation make_observation_python_parity(const TDEngine& env) {
             }
         }
     }
-    
-    // Channel 1: Start and End map
+
     at(1, env.spawn_y(), env.spawn_x()) = 1.0f;
     at(1, env.base_y(), env.base_x()) = 1.0f;
-    
-    // Channel 2: Enemies HP map
+
     for (const auto& enemy : env.enemies()) {
-        int grid_x = static_cast<int>(enemy.x); // Python uses int(enemy['x'])
-        int grid_y = static_cast<int>(enemy.y); // Python uses int(enemy['y'])
-        
+        int grid_x = static_cast<int>(enemy.x);
+        int grid_y = static_cast<int>(enemy.y);
+
         if (grid_x >= 0 && grid_x < w && grid_y >= 0 && grid_y < h) {
             float added_hp = enemy.hp / std::max(1.0f, enemy.max_hp);
             at(2, grid_y, grid_x) = std::min(1.0f, at(2, grid_y, grid_x) + added_hp);
         }
     }
-    
-    // Channel 3: Base HP
+
     float base_hp_val = env.base_hp() / 100.0f;
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
             at(3, y, x) = base_hp_val;
         }
     }
-    
-    // Channel 4: Money
+
     float money_val = std::min(1.0f, env.money() / 1000.0f);
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
             at(4, y, x) = money_val;
         }
     }
-    
+
     return obs;
 }
 
@@ -63,12 +59,11 @@ Observation make_observation_v1(const TDEngine& env) {
     int w = env.width();
     int h = env.height();
     Observation obs(OBS_CHANNELS * h * w, 0.0f);
-    
+
     auto at = [&](int c, int y, int x) -> float& {
         return obs[(c * h + y) * w + x];
     };
-    
-    // Grid/Map info
+
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
             if (env.grid()[y][x] == 1) at(CH_BLOCKED, y, x) = 1.0f;
@@ -76,8 +71,7 @@ Observation make_observation_v1(const TDEngine& env) {
     }
     at(CH_SPAWN, env.spawn_y(), env.spawn_x()) = 1.0f;
     at(CH_BASE, env.base_y(), env.base_x()) = 1.0f;
-    
-    // Tower info
+
     for (const auto& tower : env.towers()) {
         int x = tower.x;
         int y = tower.y;
@@ -85,12 +79,11 @@ Observation make_observation_v1(const TDEngine& env) {
         else if (tower.type == TowerType::Sniper) at(CH_TOWER_SNIPER, y, x) = 1.0f;
         else if (tower.type == TowerType::AOE) at(CH_TOWER_AOE, y, x) = 1.0f;
         else if (tower.type == TowerType::Slow) at(CH_TOWER_SLOW, y, x) = 1.0f;
-        
-        at(CH_TOWER_LEVEL, y, x) = tower.level / 3.0f; // max level 3
+
+        at(CH_TOWER_LEVEL, y, x) = std::min(1.0f, static_cast<float>(tower.level) / static_cast<float>(kTowerMaxLevel));
         at(CH_TOWER_COOLDOWN, y, x) = tower.cooldown / tower.cooldown_max;
     }
-    
-    // Enemy info
+
     for (const auto& enemy : env.enemies()) {
         int gx = static_cast<int>(std::round(enemy.x));
         int gy = static_cast<int>(std::round(enemy.y));
@@ -101,14 +94,13 @@ Observation make_observation_v1(const TDEngine& env) {
             at(CH_ENEMY_SLOW_TIMER, gy, gx) = std::max(at(CH_ENEMY_SLOW_TIMER, gy, gx), enemy.slow_timer / 3.0f);
         }
     }
-    
-    // Global scalars
+
     float base_hp_val = env.base_hp() / 100.0f;
     float money_val = std::min(1.0f, env.money() / 1000.0f);
     float wave_val = env.wave() / 20.0f;
     float spawn_timer_val = env.spawn_timer() / 3.0f;
     float to_spawn_val = env.enemies_to_spawn_count() / 20.0f;
-    
+
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
             at(CH_BASE_HP, y, x) = base_hp_val;
@@ -118,20 +110,19 @@ Observation make_observation_v1(const TDEngine& env) {
             at(CH_TO_SPAWN_COUNT, y, x) = to_spawn_val;
         }
     }
-    
-    // Distance to base (BFS)
+
     auto placeable_mask = env.compute_placeable_mask();
-    
-    std::vector<std::vector<int>> dist(h, std::vector<int>(w, 1e9));
+
+    std::vector<std::vector<int>> dist(h, std::vector<int>(w, 1000000000));
     std::vector<std::pair<int, int>> queue;
     int head = 0;
-    
+
     dist[env.base_y()][env.base_x()] = 0;
     queue.push_back({env.base_x(), env.base_y()});
-    
+
     const int dx[] = {0, 1, 0, -1};
     const int dy[] = {1, 0, -1, 0};
-    
+
     while (head < static_cast<int>(queue.size())) {
         auto [cx, cy] = queue[head++];
         for (int i = 0; i < 4; ++i) {
@@ -145,13 +136,13 @@ Observation make_observation_v1(const TDEngine& env) {
             }
         }
     }
-    
+
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
             if (placeable_mask[y][x]) {
                 at(CH_PLACEABLE_MASK, y, x) = 1.0f;
             }
-            if (dist[y][x] < 1e9) {
+            if (dist[y][x] < 1000000000) {
                 at(CH_DISTANCE_TO_BASE, y, x) = static_cast<float>(dist[y][x]) / 20.0f;
             }
         }
