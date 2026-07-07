@@ -10,18 +10,15 @@ DynamicsNetworkImpl::DynamicsNetworkImpl(const NetworkConfig& cfg) : cfg_(cfg) {
         torch::nn::Conv2d(torch::nn::Conv2dOptions(cfg_.hidden_channels, cfg_.latent_channels, 3).padding(1)),
         torch::nn::ReLU()
     ));
-    pool = register_module("pool", torch::nn::AdaptiveAvgPool2d(torch::nn::AdaptiveAvgPool2dOptions({1, 1})));
+    pool = register_module("pool", torch::nn::AdaptiveAvgPool2d(torch::nn::AdaptiveAvgPool2dOptions(std::vector<int64_t>{1, 1})));
     reward_head = register_module("reward_head", torch::nn::Linear(cfg_.latent_channels, cfg_.reward_dim));
 }
 
 DynamicsOutput DynamicsNetworkImpl::forward(torch::Tensor latent, const std::vector<int>& actions) {
-    auto device = latent.device();
-    auto emb = action_encoder->forward(actions, device);
+    auto emb = action_encoder->forward(actions, latent.device());
     emb = emb.view({emb.size(0), emb.size(1), 1, 1}).expand({-1, -1, cfg_.board_h, cfg_.board_w});
-    auto x = torch::cat({latent, emb}, 1);
-    auto next_latent = conv->forward(x);
-    auto pooled = pool->forward(next_latent).flatten(1);
-    auto reward = reward_head->forward(pooled);
+    auto next_latent = conv->forward(torch::cat({latent, emb}, 1));
+    auto reward = reward_head->forward(pool->forward(next_latent).flatten(1));
     return {next_latent, reward};
 }
 
