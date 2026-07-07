@@ -59,7 +59,6 @@ std::array<int, 3> observation_shape_python_parity() {
 Observation make_observation_v1(const TDEngine& env) {
     int w = env.width();
     int h = env.height();
-    const auto& tables = board_tables();
     Observation obs(OBS_CHANNELS * h * w, 0.0f);
 
     auto at = [&](int c, int y, int x) -> float& {
