@@ -10,6 +10,10 @@ add_executable(test_game_logic test_game_logic.cpp)
 target_link_libraries(test_game_logic tdmz_core)
 add_test(NAME test_game_logic COMMAND test_game_logic)
 
+add_executable(test_golden_trace test_golden_trace.cpp)
+target_link_libraries(test_golden_trace tdmz_core)
+add_test(NAME test_golden_trace COMMAND test_golden_trace)
+
 add_executable(test_mcts test_mcts.cpp)
 target_link_libraries(test_mcts tdmz_core)
 add_test(NAME test_mcts COMMAND test_mcts)
