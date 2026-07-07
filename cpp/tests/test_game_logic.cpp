@@ -13,6 +13,16 @@ static void check_true(bool ok, const char* expr, int line) {
 }
 #define CHECK_TRUE(x) check_true(static_cast<bool>(x), #x, __LINE__)
 
+void test_constructor_rejects_non_11x11() {
+    bool threw = false;
+    try {
+        TDEngine env(9, 9, 0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    CHECK_TRUE(threw);
+}
+
 void test_path_on_empty_grid() {
     TDEngine env(11, 11, 0);
     auto path = env.find_path(env.spawn_x(), env.spawn_y(), env.base_x(), env.base_y());
@@ -100,6 +110,7 @@ void test_build_legality_basics() {
 }
 
 int main() {
+    test_constructor_rejects_non_11x11();
     test_path_on_empty_grid();
     test_place_upgrade_sell_economy();
     test_invalid_action_penalty();
