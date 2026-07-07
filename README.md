@@ -67,6 +67,18 @@ The current direction is to move the old Python prototype toward a fast C++ engi
     - combined hash: `0x595648689a6a7435`.
   - Validation PASS: normal CTest `6/6` passed, Torch CTest `9/9` passed.
 
+- Phase 4.3A: static DefenseCapacity estimator
+  - Added `DefenseCapacityConfig`, `DefenseCapacityResult`, and `estimate_defense_capacity()`.
+  - Estimates current tower theoretical damage capacity over a finite wave window.
+  - Estimates spendable-money capacity by greedily selecting the best level-1 tower damage/cost option.
+  - Uses `virtual_base_hp`, not real `base_hp`, for leak capacity to avoid a defender lowering future budgets by intentionally leaking.
+  - Added `test_defense_capacity` and `export_defense_capacity`.
+  - Validation PASS: normal CTest `7/7` passed, Torch CTest `10/10` passed.
+  - Latest `export_defense_capacity` output:
+    - `empty_seed0`: current `0`, spendable `600`, leak `990`, raw `1590`, allowed `1431`, placeable `119`, selected `4 x Basic`.
+    - `one_basic_seed0`: current `160`, spendable `450`, leak `990`, raw `1600`, allowed `1440`, placeable `118`, selected `3 x Basic`.
+    - `basic_sniper_seed0`: current `460`, spendable `150`, leak `990`, raw `1600`, allowed `1440`, placeable `117`, selected `1 x Basic`.
+
 ## Current gameplay rules
 
 - Board size: fixed 11x11.
@@ -138,6 +150,7 @@ Normal build should include:
 - `test_board_tables`
 - `test_game_logic`
 - `test_golden_trace`
+- `test_defense_capacity`
 - `test_mcts`
 - `test_selfplay`
 
@@ -166,27 +179,30 @@ cmake --build build_torch --config Release -j 10
 ctest --test-dir build_torch -C Release --output-on-failure
 ```
 
-Benchmarks:
+Benchmarks and exports:
 
 ```cmd
 .\build\Release\bench_engine.exe
 .\build\Release\bench_mcts.exe
 .\build\Release\generate_selfplay_dummy.exe
+.\build\Release\export_golden_traces.exe golden_trace_current.jsonl
+.\build\Release\export_defense_capacity.exe
 
 .\build_torch\Release\bench_engine.exe
 .\build_torch\Release\bench_mcts.exe
 ```
 
-Latest local validation after golden trace semantic lock:
+Latest local validation after DefenseCapacity 4.3A:
 
-- Normal CTest: `6/6` passed.
-- Torch CTest: `9/9` passed.
+- Normal CTest: `7/7` passed.
+- Torch CTest: `10/10` passed.
 - Golden trace combined hash: `0x595648689a6a7435`.
 - `bench_engine`: `354620` steps/s.
 - Torch `bench_engine`: `359361` steps/s.
 - `bench_mcts`: `62427.5` simulations/s.
 - Torch `bench_mcts`: `61515.4` simulations/s.
 - `generate_selfplay_dummy`: `steps=58`, `total_reward=-2150`.
+- `export_defense_capacity`: `allowed_attack_hp` is `1431` for empty seed0, `1440` for one Basic, and `1440` for Basic+Sniper under the current static greedy money model.
 
 ## Current optimization state
 
@@ -201,6 +217,7 @@ Implemented:
 - Legal-actions cache keyed by `grid_version`, `tower_version`, and `money_version`.
 - Observation distance-to-base reuse through the engine distance cache.
 - Golden trace semantic lock with fixed hashes.
+- Static DefenseCapacity estimator with current tower damage, spendable-money damage, virtual-base leak cap, raw HP cap, and allowed attack HP.
 - Perf counters:
   - `pathfind_calls`
   - `placeable_recompute`
@@ -209,9 +226,10 @@ Implemented:
 
 Not yet implemented:
 
+- DefenseCapacity path-aware coverage / active-time model.
+- Attack budget integration into actual wave / attacker generation.
 - Exact tower attack acceleration using range masks and enemy cell buckets.
 - Observation full static-channel cache.
-- Defense capacity / attack budget rules.
 - Debug GUI / trace viewer.
 
 ## Engineering rule
@@ -221,6 +239,29 @@ When a phase is completed and validated, record the completed work, validation r
 If the user reports that tests passed without details, treat the phase as validated by default and update this README accordingly.
 
 ## Next optimization plan
+
+### Phase 4.3B: path-aware DefenseCapacity
+
+Improve the static theoretical estimate by accounting for tower-path interaction:
+
+- Use `BoardTables::range_mask[type][level][cell]` to estimate which path cells each tower covers.
+- Estimate active firing time from covered path cells and enemy traversal time.
+- Cap tower contribution by path coverage instead of assuming every tower can fire continuously for the full wave window.
+- Keep the 4.3A static model as a safe upper-bound/debug baseline.
+
+### Phase 4.3C: attack budget API
+
+Turn DefenseCapacity into an explicit attack budget interface:
+
+```text
+AllowedAttackHP <= DefenseDamageCap + LeakCap
+```
+
+First integration:
+
+- Given current `TDEngine`, return `allowed_attack_hp` for the next wave.
+- Add clamps by wave index so early waves cannot receive late-game monster quality.
+- Add tests that increasing defense increases attack budget and lowering virtual base HP lowers budget.
 
 ### Phase 4.2I: tower attack acceleration
 
@@ -246,21 +287,6 @@ Dynamic channels are still rewritten every step:
 - tower cooldown
 - enemy HP/density/speed/slow
 - base HP, money, wave, spawn timer, to-spawn count
-
-### Phase 4.3: defense capacity and attack budget
-
-Goal:
-
-```text
-AllowedAttackHP <= DefenseDamageCap + LeakCap
-```
-
-First version:
-
-- Estimate current tower damage capacity over a finite wave window.
-- Add spendable-money potential damage capacity.
-- Use virtual base HP for leak capacity so the defender cannot intentionally lower the budget by selling HP.
-- Clamp by wave-stage budget so early waves cannot receive late-game monster quality.
 
 ### Phase 4.4: debug GUI / trace viewer
 
