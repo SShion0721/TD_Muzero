@@ -121,13 +121,39 @@ Observation make_observation_v1(const TDEngine& env) {
     
     // Distance to base (BFS)
     auto placeable_mask = env.compute_placeable_mask();
+    
+    std::vector<std::vector<int>> dist(h, std::vector<int>(w, 1e9));
+    std::vector<std::pair<int, int>> queue;
+    int head = 0;
+    
+    dist[env.base_y()][env.base_x()] = 0;
+    queue.push_back({env.base_x(), env.base_y()});
+    
+    const int dx[] = {0, 1, 0, -1};
+    const int dy[] = {1, 0, -1, 0};
+    
+    while (head < static_cast<int>(queue.size())) {
+        auto [cx, cy] = queue[head++];
+        for (int i = 0; i < 4; ++i) {
+            int nx = cx + dx[i];
+            int ny = cy + dy[i];
+            if (nx >= 0 && nx < w && ny >= 0 && ny < h && env.grid()[ny][nx] == 0) {
+                if (dist[ny][nx] > dist[cy][cx] + 1) {
+                    dist[ny][nx] = dist[cy][cx] + 1;
+                    queue.push_back({nx, ny});
+                }
+            }
+        }
+    }
+    
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
             if (placeable_mask[y][x]) {
                 at(CH_PLACEABLE_MASK, y, x) = 1.0f;
             }
-            // For distance to base, maybe precompute it?
-            // For now, we can omit exact distance if too slow, or just leave it 0 since it's a fixed grid
+            if (dist[y][x] < 1e9) {
+                at(CH_DISTANCE_TO_BASE, y, x) = static_cast<float>(dist[y][x]) / 20.0f;
+            }
         }
     }
 

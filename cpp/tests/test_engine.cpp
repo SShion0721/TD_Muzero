@@ -1,5 +1,6 @@
 #include "tdmz/core/engine.hpp"
 #include "tdmz/core/action.hpp"
+#include "tdmz/core/observation.hpp"
 #include <iostream>
 #include <cassert>
 
@@ -30,10 +31,33 @@ void test_engine_step() {
     assert(env.towers().size() == 1);
 }
 
+void test_observation_v1_not_empty() {
+    TDEngine env(11, 11, 0);
+    auto obs = make_observation_v1(env);
+    assert(obs.size() == OBS_CHANNELS * kBoardW * kBoardH);
+
+    float sum = 0.0f;
+    for (float v : obs) sum += std::abs(v);
+    assert(sum > 0.0f);
+}
+
+void test_legal_action_mask_size() {
+    TDEngine env(11, 11, 0);
+    auto legal = env.legal_actions();
+    auto mask = env.legal_action_mask();
+
+    assert(mask.size() == kActionSpaceSize);
+    for (int a : legal) {
+        assert(mask[a] == 1);
+    }
+}
+
 int main() {
     test_action_encode_decode();
     test_engine_initialization();
     test_engine_step();
+    test_observation_v1_not_empty();
+    test_legal_action_mask_size();
     std::cout << "All engine tests passed!" << std::endl;
     return 0;
 }
