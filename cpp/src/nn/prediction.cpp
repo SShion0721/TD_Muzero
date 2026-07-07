@@ -1,4 +1,5 @@
 #include "tdmz/nn/prediction.hpp"
+#include <vector>
 
 namespace tdmz {
 
