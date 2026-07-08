@@ -56,6 +56,9 @@ target_link_libraries(bench_observation tdmz_core)
 add_executable(bench_selfplay apps/bench_selfplay.cpp)
 target_link_libraries(bench_selfplay tdmz_core)
 
+add_executable(bench_replay_loader apps/bench_replay_loader.cpp)
+target_link_libraries(bench_replay_loader tdmz_core)
+
 add_executable(bench_mcts apps/bench_mcts.cpp)
 target_link_libraries(bench_mcts tdmz_core)
 
