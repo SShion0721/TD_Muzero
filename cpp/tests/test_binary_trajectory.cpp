@@ -6,6 +6,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 using namespace tdmz;
 
@@ -48,10 +49,10 @@ static void assert_history_equal(const GameHistory& a, const GameHistory& b) {
     }
 }
 
-void test_binary_roundtrip_selfplay() {
+static GameHistory make_tiny_history(uint64_t seed, int max_steps) {
     SelfPlayConfig cfg;
-    cfg.seed = 123;
-    cfg.max_steps = 12;
+    cfg.seed = seed;
+    cfg.max_steps = max_steps;
     cfg.mcts.num_simulations = 8;
     cfg.mcts.latent_top_k = 8;
     cfg.mcts.max_nodes = 1024;
@@ -60,6 +61,11 @@ void test_binary_roundtrip_selfplay() {
     SelfPlayRunner runner(cfg);
     GameHistory history = runner.run(net);
     CHECK_TRUE(!history.steps.empty());
+    return history;
+}
+
+void test_binary_roundtrip_selfplay() {
+    GameHistory history = make_tiny_history(123, 12);
 
     const std::string path = "test_binary_trajectory.tdmzspb";
     write_history_binary(history, path);
@@ -80,10 +86,30 @@ void test_binary_roundtrip_empty_history() {
     assert_history_equal(history, loaded);
 }
 
+void test_binary_shard_roundtrip() {
+    std::vector<GameHistory> histories;
+    histories.push_back(make_tiny_history(200, 8));
+    histories.push_back(make_tiny_history(201, 9));
+    histories.push_back(make_tiny_history(202, 10));
+
+    const std::string path = "test_binary_shard.tdmzshd";
+    write_histories_binary_shard(histories, path);
+
+    auto loaded = read_histories_binary_shard(path);
+    CHECK_TRUE(loaded.size() == histories.size());
+    for (size_t i = 0; i < histories.size(); ++i) {
+        assert_history_equal(histories[i], loaded[i]);
+    }
+
+    GameHistory loaded_one = read_history_binary_shard_at(path, 1);
+    assert_history_equal(histories[1], loaded_one);
+}
+
 int main() {
     try {
         test_binary_roundtrip_selfplay();
         test_binary_roundtrip_empty_history();
+        test_binary_shard_roundtrip();
         std::cout << "Binary trajectory tests passed!" << std::endl;
         return 0;
     } catch (const std::exception& e) {
