@@ -25,6 +25,7 @@ struct EnginePerfCounters {
 class TDEngine {
 public:
     TDEngine(int width = 11, int height = 11, uint64_t seed = 0);
+    TDEngine(int width, int height, uint64_t seed, bool use_budgeted_waves);
 
     void reset(uint64_t seed);
     StepResult step_action(int flat_action);
@@ -51,6 +52,7 @@ public:
     int wave() const { return wave_; }
     float spawn_timer() const { return spawn_timer_; }
     int enemies_to_spawn_count() const { return static_cast<int>(enemies_to_spawn_.size()); }
+    float pending_spawn_total_hp() const;
     bool game_over() const { return game_over_; }
     float time() const { return time_; }
 
@@ -60,6 +62,9 @@ public:
     int base_y() const { return base_y_; }
     int width() const { return width_; }
     int height() const { return height_; }
+
+    bool use_budgeted_waves() const { return use_budgeted_waves_; }
+    void set_use_budgeted_waves(bool enabled, bool regenerate_pending_wave = false);
 
     bool in_bounds(int x, int y) const;
 
@@ -83,6 +88,7 @@ private:
     float spawn_timer_;
     float time_;
     bool game_over_;
+    bool use_budgeted_waves_ = false;
 
     std::array<std::array<int, kBoardW>, kBoardH> grid_;
     Bitboard128 bb_blocked_;
@@ -127,6 +133,8 @@ private:
     void recompute_base_distance_cache() const;
     std::vector<std::pair<int,int>> path_to_base_from_cell(int start_cell) const;
 
+    std::vector<EnemySpec> get_fixed_wave_enemies();
+    std::vector<EnemySpec> get_budgeted_wave_enemies();
     std::vector<EnemySpec> get_wave_enemies();
 };
 
