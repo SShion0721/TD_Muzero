@@ -14,6 +14,12 @@ struct BudgetedWaveConfig {
     int min_regular_count = 3;
     int max_enemy_count = 64;
     bool deterministic_greedy = true;
+
+    bool enable_elite_scaling = true;
+    float max_regular_elite_multiplier = 4.0f;
+    float max_tank_elite_multiplier = 2.0f;
+    float max_boss_elite_multiplier = 1.5f;
+    bool scale_elite_reward = true;
 };
 
 struct EnemyArchetypeSpec {
@@ -33,6 +39,10 @@ struct BudgetedWaveResult {
     float fast_hp = 0.0f;
     float tank_hp = 0.0f;
     float boss_hp = 0.0f;
+
+    float elite_bonus_hp = 0.0f;
+    int elite_scaled_count = 0;
+    float max_enemy_hp = 0.0f;
 
     int regular_count = 0;
     int fast_count = 0;
