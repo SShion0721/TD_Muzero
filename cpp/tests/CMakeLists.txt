@@ -38,6 +38,10 @@ add_executable(test_binary_trajectory test_binary_trajectory.cpp)
 target_link_libraries(test_binary_trajectory tdmz_core)
 add_test(NAME test_binary_trajectory COMMAND test_binary_trajectory)
 
+add_executable(test_replay_dataset test_replay_dataset.cpp)
+target_link_libraries(test_replay_dataset tdmz_core)
+add_test(NAME test_replay_dataset COMMAND test_replay_dataset)
+
 add_executable(test_mcts test_mcts.cpp)
 target_link_libraries(test_mcts tdmz_core)
 add_test(NAME test_mcts COMMAND test_mcts)
