@@ -12,7 +12,36 @@ namespace tdmz {
 
 namespace {
 constexpr int kInf = 1000000000;
+
+Bitboard128 expand_mask_8(Bitboard128 mask) {
+    const auto& tables = board_tables();
+    Bitboard128 expanded = mask;
+    Bitboard128 work = mask;
+    while (work) {
+        int c = work.pop_lsb();
+        int cx = tables.x[c];
+        int cy = tables.y[c];
+        for (int dy = -1; dy <= 1; ++dy) {
+            for (int dx = -1; dx <= 1; ++dx) {
+                int nx = cx + dx;
+                int ny = cy + dy;
+                if (valid_cell_xy(nx, ny)) {
+                    expanded |= tables.cell_bb[cell_id(nx, ny)];
+                }
+            }
+        }
+    }
+    return expanded;
 }
+
+int enemy_rounded_cell(const Enemy& enemy) {
+    int ex = static_cast<int>(std::round(enemy.x));
+    int ey = static_cast<int>(std::round(enemy.y));
+    if (!valid_cell_xy(ex, ey)) return -1;
+    return cell_id(ex, ey);
+}
+
+} // namespace
 
 TDEngine::TDEngine(int width, int height, uint64_t seed)
     : TDEngine(width, height, seed, false) {}
@@ -558,24 +587,77 @@ StepResult TDEngine::step_time(float dt) {
         return {step_reward, true};
     }
 
+    const auto& tables = board_tables();
+    std::array<std::vector<int>, kCells> enemy_buckets;
+    std::vector<int> enemy_cells(enemies_.size(), -1);
+    Bitboard128 enemy_occupancy = Bitboard128::zero();
+    if (!enemies_.empty()) {
+        ++perf_.enemy_bucket_recompute;
+        for (int i = 0; i < static_cast<int>(enemies_.size()); ++i) {
+            int c = enemy_rounded_cell(enemies_[i]);
+            enemy_cells[i] = c;
+            if (c >= 0) {
+                enemy_buckets[c].push_back(i);
+                enemy_occupancy |= tables.cell_bb[c];
+            }
+        }
+    }
+
     for (auto& tower : towers_) {
         tower.step(dt);
         if (tower.can_shoot()) {
-            Enemy* best_target = nullptr;
-            float best_dist = 1e9f;
+            int best_index = -1;
+            float best_dist2 = 1e30f;
+            const float range2 = tower.range * tower.range;
 
-            for (auto& enemy : enemies_) {
-                float dist = std::hypot(enemy.x - static_cast<float>(tower.x), enemy.y - static_cast<float>(tower.y));
-                if (dist <= tower.range && dist < best_dist) {
-                    best_dist = dist;
-                    best_target = &enemy;
+            if (!enemies_.empty()) {
+                int tower_cell = cell_id(tower.x, tower.y);
+                int tower_type = static_cast<int>(tower.type);
+                int tower_level = std::max(1, std::min(kTowerMaxLevel, tower.level));
+                Bitboard128 candidate_cells = expand_mask_8(tables.range_mask[tower_type][tower_level][tower_cell]) & enemy_occupancy;
+                perf_.tower_candidate_cells += static_cast<uint64_t>(candidate_cells.popcount());
+
+                while (candidate_cells) {
+                    int c = candidate_cells.pop_lsb();
+                    for (int enemy_index : enemy_buckets[c]) {
+                        Enemy& enemy = enemies_[enemy_index];
+                        float dx = enemy.x - static_cast<float>(tower.x);
+                        float dy = enemy.y - static_cast<float>(tower.y);
+                        float dist2 = dx * dx + dy * dy;
+                        ++perf_.tower_exact_distance_checks;
+                        if (dist2 <= range2 && (dist2 < best_dist2 || (dist2 == best_dist2 && (best_index < 0 || enemy_index < best_index)))) {
+                            best_dist2 = dist2;
+                            best_index = enemy_index;
+                        }
+                    }
+                }
+
+                // Extremely defensive fallback for any future off-board/interpolated enemy states.
+                if (best_index < 0) {
+                    for (int enemy_index = 0; enemy_index < static_cast<int>(enemies_.size()); ++enemy_index) {
+                        if (enemy_cells[enemy_index] >= 0) continue;
+                        Enemy& enemy = enemies_[enemy_index];
+                        float dx = enemy.x - static_cast<float>(tower.x);
+                        float dy = enemy.y - static_cast<float>(tower.y);
+                        float dist2 = dx * dx + dy * dy;
+                        ++perf_.tower_exact_distance_checks;
+                        if (dist2 <= range2 && dist2 < best_dist2) {
+                            best_dist2 = dist2;
+                            best_index = enemy_index;
+                        }
+                    }
                 }
             }
 
-            if (best_target != nullptr) {
+            if (best_index >= 0) {
+                Enemy* best_target = &enemies_[best_index];
                 if (tower.aoe_radius > 0.0f) {
+                    const float aoe2 = tower.aoe_radius * tower.aoe_radius;
                     for (auto& e : enemies_) {
-                        if (std::hypot(e.x - best_target->x, e.y - best_target->y) <= tower.aoe_radius) {
+                        float dx = e.x - best_target->x;
+                        float dy = e.y - best_target->y;
+                        ++perf_.tower_aoe_distance_checks;
+                        if (dx * dx + dy * dy <= aoe2) {
                             e.hp -= tower.damage;
                             e.apply_slow(tower.slow_factor, tower.slow_duration);
                             enemies_changed = true;
