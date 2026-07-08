@@ -98,7 +98,7 @@ void absorb_leftover_with_elites(BudgetedWaveResult& result,
     // tank/boss scaling is only a fallback when no regular backbone exists.
     for (int i = 0; i < static_cast<int>(result.enemies.size()) && remaining > 1e-5f; ++i) {
         EnemySpec& e = result.enemies[i];
-        if (std::fabs(e.base_speed - 1.5f) > 1e-4f) continue;
+        if (std::fabs(e.speed - 1.5f) > 1e-4f) continue;
         float cap_hp = regular.unit_hp * regular_max;
         float add = std::min(remaining, std::max(0.0f, cap_hp - e.hp));
         apply_elite_bonus_to_enemy(result, i, regular.unit_hp, add, cfg.scale_elite_reward, 0);
@@ -107,7 +107,7 @@ void absorb_leftover_with_elites(BudgetedWaveResult& result,
 
     for (int i = 0; i < static_cast<int>(result.enemies.size()) && remaining > 1e-5f; ++i) {
         EnemySpec& e = result.enemies[i];
-        if (std::fabs(e.base_speed - 0.8f) > 1e-4f) continue;
+        if (std::fabs(e.speed - 0.8f) > 1e-4f) continue;
         float cap_hp = tank.unit_hp * tank_max;
         float add = std::min(remaining, std::max(0.0f, cap_hp - e.hp));
         apply_elite_bonus_to_enemy(result, i, tank.unit_hp, add, cfg.scale_elite_reward, 2);
@@ -116,7 +116,7 @@ void absorb_leftover_with_elites(BudgetedWaveResult& result,
 
     for (int i = 0; i < static_cast<int>(result.enemies.size()) && remaining > 1e-5f; ++i) {
         EnemySpec& e = result.enemies[i];
-        if (std::fabs(e.base_speed - 0.6f) > 1e-4f) continue;
+        if (std::fabs(e.speed - 0.6f) > 1e-4f) continue;
         float cap_hp = boss.unit_hp * boss_max;
         float add = std::min(remaining, std::max(0.0f, cap_hp - e.hp));
         apply_elite_bonus_to_enemy(result, i, boss.unit_hp, add, cfg.scale_elite_reward, 3);
