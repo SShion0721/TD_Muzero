@@ -1,10 +1,16 @@
 #include "tdmz/selfplay/trajectory_writer.hpp"
 #include "tdmz/core/action.hpp"
+#include <condition_variable>
 #include <cstring>
+#include <deque>
+#include <exception>
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
+#include <thread>
+#include <utility>
 
 namespace tdmz {
 
@@ -334,6 +340,140 @@ void BinaryShardWriter::close() {
     out_.close();
     if (!out_) throw std::runtime_error("Failed to close trajectory binary shard path");
     closed_ = true;
+}
+
+struct AsyncBinaryShardWriter::Impl {
+    Impl(const std::string& path, size_t expected_history_count, size_t max_queue_size)
+        : path(path),
+          expected_history_count(expected_history_count),
+          max_queue_size(std::max<size_t>(1, max_queue_size)),
+          writer(path, expected_history_count),
+          worker(&Impl::writer_loop, this) {}
+
+    ~Impl() {
+        if (!closed) {
+            try {
+                close();
+            } catch (...) {
+                // Destructors must not throw. Explicit close() surfaces errors.
+            }
+        }
+    }
+
+    void write(GameHistory history) {
+        std::unique_lock<std::mutex> lock(mutex);
+        if (closed) throw std::runtime_error("Cannot write to a closed async binary shard");
+        if (error) std::rethrow_exception(error);
+        if (enqueued_count >= expected_history_count) {
+            throw std::runtime_error("Async binary shard writer received more histories than expected");
+        }
+
+        not_full.wait(lock, [&] {
+            return queue.size() < max_queue_size || error || closed;
+        });
+        if (closed) throw std::runtime_error("Cannot write to a closed async binary shard");
+        if (error) std::rethrow_exception(error);
+
+        queue.push_back(std::move(history));
+        ++enqueued_count;
+        not_empty.notify_one();
+    }
+
+    void close() {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (closed) return;
+            producer_done = true;
+            not_empty.notify_all();
+            not_full.notify_all();
+        }
+
+        if (worker.joinable()) worker.join();
+
+        std::lock_guard<std::mutex> lock(mutex);
+        closed = true;
+        if (error) std::rethrow_exception(error);
+        if (enqueued_count != expected_history_count) {
+            throw std::runtime_error("Async binary shard writer closed before all expected histories were enqueued");
+        }
+    }
+
+    void writer_loop() {
+        try {
+            while (true) {
+                GameHistory history;
+                {
+                    std::unique_lock<std::mutex> lock(mutex);
+                    not_empty.wait(lock, [&] {
+                        return !queue.empty() || producer_done;
+                    });
+
+                    if (queue.empty() && producer_done) break;
+                    history = std::move(queue.front());
+                    queue.pop_front();
+                    not_full.notify_one();
+                }
+
+                writer.write_history(history);
+            }
+            writer.close();
+        } catch (...) {
+            std::lock_guard<std::mutex> lock(mutex);
+            error = std::current_exception();
+            producer_done = true;
+            not_empty.notify_all();
+            not_full.notify_all();
+        }
+    }
+
+    std::string path;
+    size_t expected_history_count = 0;
+    size_t max_queue_size = 1;
+    size_t enqueued_count = 0;
+    bool producer_done = false;
+    bool closed = false;
+    std::exception_ptr error;
+
+    BinaryShardWriter writer;
+    std::mutex mutex;
+    std::condition_variable not_empty;
+    std::condition_variable not_full;
+    std::deque<GameHistory> queue;
+    std::thread worker;
+};
+
+AsyncBinaryShardWriter::AsyncBinaryShardWriter(
+    const std::string& path,
+    size_t expected_history_count,
+    size_t max_queue_size
+) : impl_(new Impl(path, expected_history_count, max_queue_size)) {}
+
+AsyncBinaryShardWriter::~AsyncBinaryShardWriter() = default;
+
+void AsyncBinaryShardWriter::write_history(GameHistory history) {
+    impl_->write(std::move(history));
+}
+
+void AsyncBinaryShardWriter::close() {
+    impl_->close();
+}
+
+size_t AsyncBinaryShardWriter::expected_history_count() const {
+    return impl_->expected_history_count;
+}
+
+size_t AsyncBinaryShardWriter::enqueued_count() const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->enqueued_count;
+}
+
+size_t AsyncBinaryShardWriter::max_queue_size() const {
+    return impl_->max_queue_size;
+}
+
+bool AsyncBinaryShardWriter::closed() const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->closed;
 }
 
 void write_histories_binary_shard(const std::vector<GameHistory>& histories, const std::string& path) {
