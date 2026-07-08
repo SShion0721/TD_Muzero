@@ -25,12 +25,12 @@ namespace {
 
 struct GeneratorConfig {
     int games = 64;
-    int workers = 4;
+    int workers = 8;
     int max_steps = 64;
     int simulations = 32;
     int latent_top_k = 16;
     int max_nodes = 8192;
-    int writer_queue_size = 4;
+    int writer_queue_size = 8;
     uint64_t seed = 0;
     bool budgeted = false;
     bool async_write = true;
@@ -122,7 +122,7 @@ void print_help(const char* argv0) {
         << "\n"
         << "Options:\n"
         << "  --games N          Total self-play games to generate. Default: 64\n"
-        << "  --workers N        Number of actor workers. Default: min(4, hardware_concurrency)\n"
+        << "  --workers N        Number of actor workers. Default: min(8, hardware_concurrency)\n"
         << "  --sims N           MCTS simulations per move. Default: 32\n"
         << "  --max-steps N      Max steps per game. Default: 64\n"
         << "  --latent-top-k N   MCTS latent expansion top-k. Default: 16\n"
@@ -133,14 +133,14 @@ void print_help(const char* argv0) {
         << "  --fixed            Force fixed wave mode\n"
         << "  --async-write      Use bounded memory queue + writer thread per actor. Default\n"
         << "  --sync-write       Write shard synchronously in each actor\n"
-        << "  --writer-queue N   Async writer queue size per actor. Default: 4\n"
+        << "  --writer-queue N   Async writer queue size per actor. Default: 8\n"
         << "  --help             Show this help\n";
 }
 
 GeneratorConfig parse_args(int argc, char** argv) {
     GeneratorConfig cfg;
     unsigned int hc = std::thread::hardware_concurrency();
-    cfg.workers = std::max(1, std::min(4, static_cast<int>(hc ? hc : 4)));
+    cfg.workers = std::max(1, std::min(8, static_cast<int>(hc ? hc : 8)));
 
     std::vector<std::string> args;
     for (int i = 1; i < argc; ++i) args.emplace_back(argv[i]);
