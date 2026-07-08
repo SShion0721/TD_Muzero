@@ -30,8 +30,10 @@ struct GeneratorConfig {
     int simulations = 32;
     int latent_top_k = 16;
     int max_nodes = 8192;
+    int writer_queue_size = 4;
     uint64_t seed = 0;
     bool budgeted = false;
+    bool async_write = true;
     std::string prefix = "data/selfplay/train";
 };
 
@@ -129,6 +131,9 @@ void print_help(const char* argv0) {
         << "  --prefix PATH      Output prefix. Default: data/selfplay/train\n"
         << "  --budgeted         Enable budgeted wave mode. Default: fixed waves\n"
         << "  --fixed            Force fixed wave mode\n"
+        << "  --async-write      Use bounded memory queue + writer thread per actor. Default\n"
+        << "  --sync-write       Write shard synchronously in each actor\n"
+        << "  --writer-queue N   Async writer queue size per actor. Default: 4\n"
         << "  --help             Show this help\n";
 }
 
@@ -148,10 +153,13 @@ GeneratorConfig parse_args(int argc, char** argv) {
         else if (a == "--max-steps") cfg.max_steps = parse_int_arg(args, i, "--max-steps");
         else if (a == "--latent-top-k") cfg.latent_top_k = parse_int_arg(args, i, "--latent-top-k");
         else if (a == "--max-nodes") cfg.max_nodes = parse_int_arg(args, i, "--max-nodes");
+        else if (a == "--writer-queue") cfg.writer_queue_size = parse_int_arg(args, i, "--writer-queue");
         else if (a == "--seed") cfg.seed = parse_u64_arg(args, i, "--seed");
         else if (a == "--prefix") cfg.prefix = parse_string_arg(args, i, "--prefix");
         else if (a == "--budgeted") cfg.budgeted = true;
         else if (a == "--fixed") cfg.budgeted = false;
+        else if (a == "--async-write") cfg.async_write = true;
+        else if (a == "--sync-write") cfg.async_write = false;
         else if (a == "--help" || a == "-h") {
             print_help(argv[0]);
             std::exit(0);
@@ -166,6 +174,7 @@ GeneratorConfig parse_args(int argc, char** argv) {
     if (cfg.simulations <= 0) throw std::runtime_error("--sims must be positive");
     if (cfg.latent_top_k <= 0) throw std::runtime_error("--latent-top-k must be positive");
     if (cfg.max_nodes <= 0) throw std::runtime_error("--max-nodes must be positive");
+    if (cfg.writer_queue_size <= 0) throw std::runtime_error("--writer-queue must be positive");
     cfg.workers = std::min(cfg.workers, cfg.games);
     return cfg;
 }
@@ -189,13 +198,8 @@ std::vector<WorkerPlan> make_worker_plans(const GeneratorConfig& cfg) {
     return plans;
 }
 
-WorkerResult run_worker(const GeneratorConfig& cfg, const WorkerPlan& plan) {
-    WorkerResult result;
-    result.worker_id = plan.worker_id;
-    result.games = plan.games;
-    result.seed_start = plan.seed_start;
-    result.shard_path = plan.shard_path;
-
+template <typename Writer>
+void run_generation_loop(const GeneratorConfig& cfg, const WorkerPlan& plan, Writer& writer, WorkerResult& result) {
     DummyNetwork net;
     SelfPlayConfig sp;
     sp.max_steps = cfg.max_steps;
@@ -205,8 +209,6 @@ WorkerResult run_worker(const GeneratorConfig& cfg, const WorkerPlan& plan) {
     sp.save_observations = true;
     sp.save_legal_mask = true;
 
-    auto start = std::chrono::high_resolution_clock::now();
-    BinaryShardWriter writer(plan.shard_path, static_cast<size_t>(plan.games));
     for (int g = 0; g < plan.games; ++g) {
         sp.seed = plan.seed_start + static_cast<uint64_t>(g);
         TDEngine env(11, 11, sp.seed, cfg.budgeted);
@@ -220,9 +222,31 @@ WorkerResult run_worker(const GeneratorConfig& cfg, const WorkerPlan& plan) {
         result.total_reward += history.total_reward;
         result.checksum += checksum_history(history);
 
-        writer.write_history(history);
+        writer.write_history(std::move(history));
     }
-    writer.close();
+}
+
+WorkerResult run_worker(const GeneratorConfig& cfg, const WorkerPlan& plan) {
+    WorkerResult result;
+    result.worker_id = plan.worker_id;
+    result.games = plan.games;
+    result.seed_start = plan.seed_start;
+    result.shard_path = plan.shard_path;
+
+    auto start = std::chrono::high_resolution_clock::now();
+    if (cfg.async_write) {
+        AsyncBinaryShardWriter writer(
+            plan.shard_path,
+            static_cast<size_t>(plan.games),
+            static_cast<size_t>(cfg.writer_queue_size)
+        );
+        run_generation_loop(cfg, plan, writer, result);
+        writer.close();
+    } else {
+        BinaryShardWriter writer(plan.shard_path, static_cast<size_t>(plan.games));
+        run_generation_loop(cfg, plan, writer, result);
+        writer.close();
+    }
     result.bytes_written = file_size_bytes(plan.shard_path);
     auto end = std::chrono::high_resolution_clock::now();
     result.seconds = std::chrono::duration<double>(end - start).count();
@@ -255,6 +279,8 @@ void write_index_json(const GeneratorConfig& cfg, const std::vector<WorkerResult
     out << "  \"version\": 1,\n";
     out << "  \"prefix\": \"" << json_escape(cfg.prefix) << "\",\n";
     out << "  \"budgeted\": " << (cfg.budgeted ? "true" : "false") << ",\n";
+    out << "  \"async_write\": " << (cfg.async_write ? "true" : "false") << ",\n";
+    out << "  \"writer_queue_size\": " << cfg.writer_queue_size << ",\n";
     out << "  \"games\": " << total_games << ",\n";
     out << "  \"workers\": " << cfg.workers << ",\n";
     out << "  \"max_steps\": " << cfg.max_steps << ",\n";
@@ -311,6 +337,8 @@ void print_summary_json(const GeneratorConfig& cfg, const std::vector<WorkerResu
     std::cout << std::fixed << std::setprecision(6)
               << "{\"index\":\"" << json_escape(index_path) << "\""
               << ",\"budgeted\":" << (cfg.budgeted ? "true" : "false")
+              << ",\"async_write\":" << (cfg.async_write ? "true" : "false")
+              << ",\"writer_queue_size\":" << cfg.writer_queue_size
               << ",\"workers\":" << cfg.workers
               << ",\"games\":" << total_games
               << ",\"steps\":" << total_steps
