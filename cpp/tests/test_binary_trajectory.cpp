@@ -103,6 +103,17 @@ void test_binary_shard_roundtrip() {
 
     GameHistory loaded_one = read_history_binary_shard_at(path, 1);
     assert_history_equal(histories[1], loaded_one);
+
+    BinaryShardReader reader(path);
+    CHECK_TRUE(reader.history_count() == histories.size());
+    CHECK_TRUE(reader.path() == path);
+    assert_history_equal(histories[0], reader.read_at(0));
+    assert_history_equal(histories[2], reader.read_at(2));
+    auto cached_loaded = reader.read_all();
+    CHECK_TRUE(cached_loaded.size() == histories.size());
+    for (size_t i = 0; i < histories.size(); ++i) {
+        assert_history_equal(histories[i], cached_loaded[i]);
+    }
 }
 
 void test_async_binary_shard_roundtrip() {
@@ -132,6 +143,11 @@ void test_async_binary_shard_roundtrip() {
 
     GameHistory loaded_one = read_history_binary_shard_at(path, 2);
     assert_history_equal(histories[2], loaded_one);
+
+    BinaryShardReader reader(path);
+    CHECK_TRUE(reader.history_count() == histories.size());
+    assert_history_equal(histories[1], reader.read_at(1));
+    assert_history_equal(histories[3], reader.read_at(3));
 }
 
 int main() {
