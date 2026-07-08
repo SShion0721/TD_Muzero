@@ -7,10 +7,18 @@
 #include <iomanip>
 #include <iostream>
 #include <string>
+#include <vector>
 
 using namespace tdmz;
 
 namespace {
+
+enum class WriteMode {
+    None,
+    PerGameBinary,
+    ShardBinary,
+    Jsonl
+};
 
 struct BenchResult {
     std::string name;
@@ -47,7 +55,7 @@ double checksum_history(const GameHistory& history) {
     return sum;
 }
 
-BenchResult run_case(const std::string& name, bool budgeted, bool write_binary, bool write_jsonl, int games, int max_steps, int simulations) {
+BenchResult run_case(const std::string& name, bool budgeted, WriteMode write_mode, int games, int max_steps, int simulations) {
     DummyNetwork net;
     SelfPlayConfig cfg;
     cfg.max_steps = max_steps;
@@ -60,6 +68,11 @@ BenchResult run_case(const std::string& name, bool budgeted, bool write_binary, 
     BenchResult result;
     result.name = name;
     result.games = games;
+
+    std::vector<GameHistory> shard_histories;
+    if (write_mode == WriteMode::ShardBinary) {
+        shard_histories.reserve(games);
+    }
 
     auto start = std::chrono::high_resolution_clock::now();
     for (int g = 0; g < games; ++g) {
@@ -75,17 +88,25 @@ BenchResult run_case(const std::string& name, bool budgeted, bool write_binary, 
         result.trajectory_records += steps;
         result.checksum += checksum_history(history);
 
-        if (write_binary) {
+        if (write_mode == WriteMode::PerGameBinary) {
             std::string path = "bench_selfplay_" + name + "_" + std::to_string(g) + ".tdmzspb";
             write_history_binary(history, path);
             result.bytes_written += file_size_bytes(path);
-        }
-        if (write_jsonl) {
+        } else if (write_mode == WriteMode::Jsonl) {
             std::string path = "bench_selfplay_" + name + "_" + std::to_string(g) + ".jsonl";
             write_history_jsonl(history, path);
             result.bytes_written += file_size_bytes(path);
+        } else if (write_mode == WriteMode::ShardBinary) {
+            shard_histories.push_back(std::move(history));
         }
     }
+
+    if (write_mode == WriteMode::ShardBinary) {
+        std::string path = "bench_selfplay_" + name + ".tdmzshd";
+        write_histories_binary_shard(shard_histories, path);
+        result.bytes_written += file_size_bytes(path);
+    }
+
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> diff = end - start;
     result.seconds = diff.count();
@@ -132,11 +153,13 @@ int main() {
     const int max_steps = 64;
     const int simulations = 32;
 
-    print_result(run_case("fixed_no_write", false, false, false, games, max_steps, simulations));
-    print_result(run_case("budgeted_no_write", true, false, false, games, max_steps, simulations));
-    print_result(run_case("fixed_binary_write", false, true, false, games, max_steps, simulations));
-    print_result(run_case("budgeted_binary_write", true, true, false, games, max_steps, simulations));
-    print_result(run_case("fixed_jsonl_write", false, false, true, 2, max_steps, simulations));
+    print_result(run_case("fixed_no_write", false, WriteMode::None, games, max_steps, simulations));
+    print_result(run_case("budgeted_no_write", true, WriteMode::None, games, max_steps, simulations));
+    print_result(run_case("fixed_binary_write", false, WriteMode::PerGameBinary, games, max_steps, simulations));
+    print_result(run_case("budgeted_binary_write", true, WriteMode::PerGameBinary, games, max_steps, simulations));
+    print_result(run_case("fixed_binary_shard_write", false, WriteMode::ShardBinary, games, max_steps, simulations));
+    print_result(run_case("budgeted_binary_shard_write", true, WriteMode::ShardBinary, games, max_steps, simulations));
+    print_result(run_case("fixed_jsonl_write", false, WriteMode::Jsonl, 2, max_steps, simulations));
 
     return 0;
 }
