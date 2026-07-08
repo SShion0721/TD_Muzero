@@ -30,6 +30,10 @@ add_executable(test_engine_wave_modes test_engine_wave_modes.cpp)
 target_link_libraries(test_engine_wave_modes tdmz_core)
 add_test(NAME test_engine_wave_modes COMMAND test_engine_wave_modes)
 
+add_executable(test_observation_cache test_observation_cache.cpp)
+target_link_libraries(test_observation_cache tdmz_core)
+add_test(NAME test_observation_cache COMMAND test_observation_cache)
+
 add_executable(test_mcts test_mcts.cpp)
 target_link_libraries(test_mcts tdmz_core)
 add_test(NAME test_mcts COMMAND test_mcts)
