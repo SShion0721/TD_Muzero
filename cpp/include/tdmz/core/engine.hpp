@@ -20,6 +20,10 @@ struct EnginePerfCounters {
     uint64_t placeable_recompute = 0;
     uint64_t legal_recompute = 0;
     uint64_t base_distance_recompute = 0;
+    uint64_t enemy_bucket_recompute = 0;
+    uint64_t tower_candidate_cells = 0;
+    uint64_t tower_exact_distance_checks = 0;
+    uint64_t tower_aoe_distance_checks = 0;
 };
 
 class TDEngine {
