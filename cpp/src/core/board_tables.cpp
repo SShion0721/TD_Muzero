@@ -3,6 +3,30 @@
 
 namespace tdmz {
 
+namespace {
+
+Bitboard128 expand_mask_8_neighbors(Bitboard128 mask, const std::array<int, kCells>& xs, const std::array<int, kCells>& ys, const std::array<Bitboard128, kCells>& cell_bb) {
+    Bitboard128 expanded = mask;
+    Bitboard128 work = mask;
+    while (work) {
+        int c = work.pop_lsb();
+        int cx = xs[c];
+        int cy = ys[c];
+        for (int dy = -1; dy <= 1; ++dy) {
+            for (int dx = -1; dx <= 1; ++dx) {
+                int nx = cx + dx;
+                int ny = cy + dy;
+                if (valid_cell_xy(nx, ny)) {
+                    expanded |= cell_bb[cell_id(nx, ny)];
+                }
+            }
+        }
+    }
+    return expanded;
+}
+
+} // namespace
+
 BoardTables::BoardTables() {
     board_mask = Bitboard128::zero();
 
@@ -47,7 +71,10 @@ BoardTables::BoardTables() {
         TowerStats stats = tower_stats(static_cast<TowerType>(t));
         float range = stats.range;
         for (int lvl = 0; lvl <= kTowerMaxLevel; ++lvl) {
-            for (int c = 0; c < kCells; ++c) range_mask[t][lvl][c] = Bitboard128::zero();
+            for (int c = 0; c < kCells; ++c) {
+                range_mask[t][lvl][c] = Bitboard128::zero();
+                range_mask_expanded8[t][lvl][c] = Bitboard128::zero();
+            }
         }
         for (int lvl = 1; lvl <= kTowerMaxLevel; ++lvl) {
             float r2 = range * range;
@@ -59,6 +86,7 @@ BoardTables::BoardTables() {
                     }
                 }
                 range_mask[t][lvl][c] = mask;
+                range_mask_expanded8[t][lvl][c] = expand_mask_8_neighbors(mask, x, y, cell_bb);
             }
             range *= 1.1f;
         }
