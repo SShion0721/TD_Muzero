@@ -50,6 +50,6 @@ int main() {
     print_result("budget_path_basic_sniper_seed0", generate_budgeted_wave(budget_defended));
 
     print_result("synthetic_wave3_budget2500", generate_budgeted_wave(synthetic_budget(3, 2500.0f)));
-    print_result("synthetic_wave5_budget8000", generate_budgeted_wave(synthetic_budget(5, 8000.0f)));
+    print_result("synthetic_wave5_budget30000", generate_budgeted_wave(synthetic_budget(5, 30000.0f)));
     return 0;
 }
