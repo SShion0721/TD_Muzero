@@ -42,6 +42,14 @@ int add_by_budget(BudgetedWaveResult& result, const EnemyArchetypeSpec& arch, fl
     return count;
 }
 
+float remaining_total_budget(const BudgetedWaveResult& result, float total) {
+    return std::max(0.0f, total - result.used_budget_hp);
+}
+
+int max_count_left(const BudgetedWaveResult& result, int max_count) {
+    return std::max(0, max_count - static_cast<int>(result.enemies.size()));
+}
+
 } // namespace
 
 EnemyArchetypeSpec regular_archetype_for_wave(int wave) {
@@ -120,31 +128,31 @@ BudgetedWaveResult generate_budgeted_wave(const AttackBudgetResult& budget, cons
     float assigned = regular_budget + fast_budget + tank_budget + boss_budget;
     if (assigned < total) regular_budget += (total - assigned);
 
-    int max_left = max_count;
-
-    add_by_budget(result, boss, boss_budget, max_left, 3);
-    max_left = max_count - static_cast<int>(result.enemies.size());
-    add_by_budget(result, tank, tank_budget, max_left, 2);
-    max_left = max_count - static_cast<int>(result.enemies.size());
-    add_by_budget(result, fast, fast_budget, max_left, 1);
-    max_left = max_count - static_cast<int>(result.enemies.size());
-
-    float used_before_regular = result.used_budget_hp;
-    float budget_left_for_regular = std::max(0.0f, total - used_before_regular);
-    float regular_budget_capped = std::min(regular_budget, budget_left_for_regular);
-    int regular_added = add_by_budget(result, regular, regular_budget_capped, max_left, 0);
-    max_left = max_count - static_cast<int>(result.enemies.size());
-
+    // Slot-aware deterministic greedy:
+    // 1. reserve a small regular backbone first;
+    // 2. add rare high-value archetypes;
+    // 3. spend the main regular budget before low-HP fast fillers;
+    // 4. absorb leftover budget with regulars when count-limited special/fast budgets leave holes.
     int min_regular = std::max(0, cfg.min_regular_count);
-    while (result.regular_count < min_regular && max_left > 0 && result.used_budget_hp + regular.unit_hp <= total) {
+    float regular_reserved_budget = std::min(regular_budget, total);
+    while (result.regular_count < min_regular && max_count_left(result, max_count) > 0 &&
+           regular_reserved_budget >= regular.unit_hp && result.used_budget_hp + regular.unit_hp <= total) {
         push_enemy(result, regular, 0);
-        --max_left;
-        ++regular_added;
+        regular_reserved_budget -= regular.unit_hp;
+        regular_budget = std::max(0.0f, regular_budget - regular.unit_hp);
     }
 
-    if (result.regular_count == 0 && max_left > 0 && result.used_budget_hp + regular.unit_hp <= total) {
+    add_by_budget(result, boss, std::min(boss_budget, remaining_total_budget(result, total)), max_count_left(result, max_count), 3);
+    add_by_budget(result, tank, std::min(tank_budget, remaining_total_budget(result, total)), max_count_left(result, max_count), 2);
+    add_by_budget(result, regular, std::min(regular_budget, remaining_total_budget(result, total)), max_count_left(result, max_count), 0);
+    add_by_budget(result, fast, std::min(fast_budget, remaining_total_budget(result, total)), max_count_left(result, max_count), 1);
+
+    while (max_count_left(result, max_count) > 0 && result.used_budget_hp + regular.unit_hp <= total) {
         push_enemy(result, regular, 0);
-        --max_left;
+    }
+
+    if (result.regular_count == 0 && max_count_left(result, max_count) > 0 && result.used_budget_hp + regular.unit_hp <= total) {
+        push_enemy(result, regular, 0);
     }
 
     result.used_budget_hp = nonnegative_finite(result.used_budget_hp);
