@@ -67,6 +67,8 @@ void test_wave_five_allows_boss_when_budget_can_afford_one() {
     auto r = generate_budgeted_wave(b);
     CHECK_TRUE(r.boss_count > 0);
     CHECK_TRUE(r.tank_count > 0);
+    CHECK_TRUE(r.regular_count > 0);
+    CHECK_TRUE(r.used_budget_hp > 10000.0f);
     CHECK_TRUE(r.boss_hp <= b.boss_hp_cap + 1e-4f);
     CHECK_TRUE(r.tank_hp <= b.tank_hp_cap + 1e-4f);
 }
