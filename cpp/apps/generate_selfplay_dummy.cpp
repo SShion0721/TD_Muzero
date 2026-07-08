@@ -18,6 +18,7 @@ int main() {
     auto history = runner.run(net);
 
     write_history_jsonl(history, "selfplay_dummy.jsonl");
+    write_history_binary(history, "selfplay_dummy.tdmzspb");
     write_history_summary_json(history, "selfplay_dummy.summary.json");
 
     std::cout << "steps=" << history.steps.size() << " total_reward=" << history.total_reward << std::endl;
