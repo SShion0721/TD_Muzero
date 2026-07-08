@@ -26,6 +26,10 @@ add_executable(test_budgeted_wave_generator test_budgeted_wave_generator.cpp)
 target_link_libraries(test_budgeted_wave_generator tdmz_core)
 add_test(NAME test_budgeted_wave_generator COMMAND test_budgeted_wave_generator)
 
+add_executable(test_engine_wave_modes test_engine_wave_modes.cpp)
+target_link_libraries(test_engine_wave_modes tdmz_core)
+add_test(NAME test_engine_wave_modes COMMAND test_engine_wave_modes)
+
 add_executable(test_mcts test_mcts.cpp)
 target_link_libraries(test_mcts tdmz_core)
 add_test(NAME test_mcts COMMAND test_mcts)
