@@ -105,11 +105,41 @@ void test_binary_shard_roundtrip() {
     assert_history_equal(histories[1], loaded_one);
 }
 
+void test_async_binary_shard_roundtrip() {
+    std::vector<GameHistory> histories;
+    histories.push_back(make_tiny_history(300, 8));
+    histories.push_back(make_tiny_history(301, 9));
+    histories.push_back(make_tiny_history(302, 10));
+    histories.push_back(make_tiny_history(303, 11));
+
+    const std::string path = "test_async_binary_shard.tdmzshd";
+    {
+        // Queue size 1 forces producer/writer backpressure in the test.
+        AsyncBinaryShardWriter writer(path, histories.size(), 1);
+        for (auto& history : histories) {
+            writer.write_history(history);
+        }
+        CHECK_TRUE(writer.enqueued_count() == histories.size());
+        writer.close();
+        CHECK_TRUE(writer.closed());
+    }
+
+    auto loaded = read_histories_binary_shard(path);
+    CHECK_TRUE(loaded.size() == histories.size());
+    for (size_t i = 0; i < histories.size(); ++i) {
+        assert_history_equal(histories[i], loaded[i]);
+    }
+
+    GameHistory loaded_one = read_history_binary_shard_at(path, 2);
+    assert_history_equal(histories[2], loaded_one);
+}
+
 int main() {
     try {
         test_binary_roundtrip_selfplay();
         test_binary_roundtrip_empty_history();
         test_binary_shard_roundtrip();
+        test_async_binary_shard_roundtrip();
         std::cout << "Binary trajectory tests passed!" << std::endl;
         return 0;
     } catch (const std::exception& e) {
