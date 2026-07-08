@@ -1,5 +1,6 @@
 #pragma once
 #include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 #include "tdmz/selfplay/game_history.hpp"
@@ -47,6 +48,35 @@ private:
     bool closed_ = true;
     std::ofstream out_;
     std::vector<uint64_t> offsets_;
+};
+
+// Asynchronous shard writer for actor-style self-play generation.
+// Producers enqueue completed GameHistory objects into a bounded memory queue;
+// a dedicated writer thread serializes and writes them to disk. This hides most
+// disk latency from the self-play hot path while bounding memory use.
+class AsyncBinaryShardWriter {
+public:
+    AsyncBinaryShardWriter(
+        const std::string& path,
+        size_t expected_history_count,
+        size_t max_queue_size = 4
+    );
+    ~AsyncBinaryShardWriter();
+
+    AsyncBinaryShardWriter(const AsyncBinaryShardWriter&) = delete;
+    AsyncBinaryShardWriter& operator=(const AsyncBinaryShardWriter&) = delete;
+
+    void write_history(GameHistory history);
+    void close();
+
+    size_t expected_history_count() const;
+    size_t enqueued_count() const;
+    size_t max_queue_size() const;
+    bool closed() const;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 } // namespace tdmz
