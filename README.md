@@ -77,6 +77,18 @@ The current direction is to move the old Python prototype toward a fast C++ engi
   - Golden trace semantic lock remains unchanged: combined hash `0x595648689a6a7435`.
   - Latest warmed `bench_engine`: `379932` steps/s over 2992 steps.
 
+- Phase 4.2J2: dedicated observation benchmark
+  - Added `bench_observation` to measure high-frequency `make_observation_v1()` cost directly.
+  - Benchmark cases cover fixed/budgeted environments and static-cache-hit/dynamic-step workloads.
+  - Output includes observations per second and a checksum to prevent dead-code elimination.
+  - Validation PASS: `bench_observation` ran successfully.
+  - Latest observation benchmark:
+    - `fixed_static_cached`: `2698195.986164` observations/s.
+    - `budgeted_static_cached`: `2724246.337251` observations/s.
+    - `fixed_dynamic_steps`: `811036.585860` observations/s.
+    - `budgeted_dynamic_steps`: `521874.363966` observations/s.
+  - Latest warmed `bench_engine`: `386533` steps/s over 2992 steps.
+
 - Phase 4.2K: golden trace semantic lock
   - Added deterministic golden trace infrastructure with fixed seeds and fixed action scripts.
   - Added `test_golden_trace` as a semantic lock test with fixed expected hashes.
@@ -274,6 +286,7 @@ Benchmarks and exports:
 
 ```cmd
 .\build\Release\bench_engine.exe
+.\build\Release\bench_observation.exe
 .\build\Release\bench_mcts.exe
 .\build\Release\generate_selfplay_dummy.exe
 .\build\Release\export_golden_traces.exe golden_trace_current.jsonl
@@ -287,14 +300,17 @@ Benchmarks and exports:
 .\build_torch\Release\bench_mcts.exe
 ```
 
-Latest local validation after Observation Cache 4.2J:
+Latest local validation after Observation Benchmark 4.2J2:
 
 - Normal test targets: `11`.
 - Normal CTest: `11/11` passed.
 - Golden trace combined hash: `0x595648689a6a7435`.
-- `bench_engine`: `379932` steps/s over 2992 steps after static table warmup.
-- Previous warmed tower-targeting benchmark: `371036` steps/s.
-- Previous pre-targeting baseline: about `354620` steps/s.
+- `bench_engine`: `386533` steps/s over 2992 steps after static table warmup.
+- `bench_observation`:
+  - `fixed_static_cached`: `2698195.986164` observations/s, checksum `41257832.906395`.
+  - `budgeted_static_cached`: `2724246.337251` observations/s, checksum `74074533.194641`.
+  - `fixed_dynamic_steps`: `811036.585860` observations/s, checksum `13234979.216582`.
+  - `budgeted_dynamic_steps`: `521874.363966` observations/s, checksum `15171482.503696`.
 
 ## Current optimization state
 
@@ -309,6 +325,7 @@ Implemented:
 - Legal-actions cache keyed by `grid_version`, `tower_version`, and `money_version`.
 - Observation distance-to-base reuse through the engine distance cache.
 - Observation static-channel cache keyed by engine pointer, `grid_version`, and `tower_version`.
+- Dedicated observation benchmark app.
 - Golden trace semantic lock with fixed hashes.
 - Static DefenseCapacity estimator with current tower damage, spendable-money damage, virtual-base leak cap, raw HP cap, and allowed attack HP.
 - Path-aware greedy DefenseCapacity with path bitboard coverage, static/current differential diagnostics, and build/upgrade candidate gain-per-cost selection.
@@ -333,7 +350,7 @@ Not yet implemented:
 - Config serialization for wave-generation mode.
 - Multi-upgrade lookahead or sequential candidate refresh after a chosen upgrade.
 - Enemy slot pool / stable-index object pool.
-- Dedicated observation benchmark app.
+- Self-play throughput benchmark.
 - Debug GUI / trace viewer.
 
 ## Engineering rule
@@ -344,15 +361,15 @@ If the user reports that tests passed without details, treat the phase as valida
 
 ## Next optimization plan
 
-### Phase 4.2J2: dedicated observation benchmark
+### Phase 4.2M: self-play throughput benchmark
 
-Add a `bench_observation` app to measure high-frequency `make_observation_v1()` cost directly:
+Observation construction is already fast enough for the current engine. The next bottleneck should be measured at the self-play/MCTS boundary:
 
-- warm static tables before timing
-- run fixed and budgeted environments
-- call `make_observation_v1()` repeatedly on unchanged static versions
-- call it across dynamic steps
-- report observations per second and checksum to prevent dead-code elimination
+- add a `bench_selfplay` app
+- run dummy evaluator and optional LibTorch evaluator separately
+- report games/s, steps/s, MCTS simulations/s, observation calls/s, and JSONL writer cost
+- run fixed and budgeted wave modes
+- use checksums/counters to prevent dead-code elimination
 
 ### Phase 4.2L: EnemySlotPool semantic-preserving refactor
 
