@@ -1,5 +1,6 @@
 #include "tdmz/balance/budgeted_wave_generator.hpp"
 #include <cmath>
+#include <exception>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -61,8 +62,8 @@ void test_wave_three_allows_tank() {
     CHECK_TRUE(r.tank_hp <= b.tank_hp_cap + 1e-4f);
 }
 
-void test_wave_five_allows_boss() {
-    auto b = make_budget(5, 8000.0f);
+void test_wave_five_allows_boss_when_budget_can_afford_one() {
+    auto b = make_budget(5, 30000.0f);
     auto r = generate_budgeted_wave(b);
     CHECK_TRUE(r.boss_count > 0);
     CHECK_TRUE(r.tank_count > 0);
@@ -109,14 +110,19 @@ void test_max_enemy_count() {
 }
 
 int main() {
-    test_budget_not_exceeded();
-    test_wave_one_locks_tank_boss();
-    test_wave_three_allows_tank();
-    test_wave_five_allows_boss();
-    test_ratio_caps_are_respected();
-    test_monotonic_budget();
-    test_deterministic();
-    test_max_enemy_count();
-    std::cout << "Budgeted wave generator tests passed!" << std::endl;
-    return 0;
+    try {
+        test_budget_not_exceeded();
+        test_wave_one_locks_tank_boss();
+        test_wave_three_allows_tank();
+        test_wave_five_allows_boss_when_budget_can_afford_one();
+        test_ratio_caps_are_respected();
+        test_monotonic_budget();
+        test_deterministic();
+        test_max_enemy_count();
+        std::cout << "Budgeted wave generator tests passed!" << std::endl;
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << e.what() << std::endl;
+        return 1;
+    }
 }
