@@ -67,6 +67,16 @@ The current direction is to move the old Python prototype toward a fast C++ engi
   - Validation PASS: golden trace combined hash remains `0x595648689a6a7435`.
   - Latest warmed `bench_engine`: `371036` steps/s over 2992 steps, exceeding the previous 354k baseline.
 
+- Phase 4.2J: observation static-channel cache
+  - Added public engine version getters: `grid_version()`, `tower_version()`, `money_version()`, `enemy_version()`, and `wave_version()`.
+  - `make_observation_v1()` now caches static and semi-static channels through a `thread_local ObservationStaticCache` keyed by engine pointer, `grid_version`, and `tower_version`.
+  - Cached static/semi-static channels: blocked grid, spawn, base, tower type, tower level, distance-to-base, and placeable mask.
+  - Dynamic channels are still written every call: tower cooldown, enemy HP/density/speed/slow timer, base HP, money, wave, spawn timer, and to-spawn count.
+  - Added `test_observation_cache`, comparing cached observations against a local reference implementation across build, step, repeated-call, upgrade, and two-env cache-switch cases.
+  - Validation PASS: normal CTest `11/11` passed.
+  - Golden trace semantic lock remains unchanged: combined hash `0x595648689a6a7435`.
+  - Latest warmed `bench_engine`: `379932` steps/s over 2992 steps.
+
 - Phase 4.2K: golden trace semantic lock
   - Added deterministic golden trace infrastructure with fixed seeds and fixed action scripts.
   - Added `test_golden_trace` as a semantic lock test with fixed expected hashes.
@@ -231,6 +241,7 @@ Normal build should include:
 - `test_attack_budget`
 - `test_budgeted_wave_generator`
 - `test_engine_wave_modes`
+- `test_observation_cache`
 - `test_mcts`
 - `test_selfplay`
 
@@ -276,23 +287,14 @@ Benchmarks and exports:
 .\build_torch\Release\bench_mcts.exe
 ```
 
-Latest local validation after Tower Targeting 4.2I4:
+Latest local validation after Observation Cache 4.2J:
 
-- Normal test targets: `10`.
+- Normal test targets: `11`.
+- Normal CTest: `11/11` passed.
 - Golden trace combined hash: `0x595648689a6a7435`.
-- `bench_engine`: `371036` steps/s over 2992 steps after static table warmup.
-- Fixed-wave A/B smoke remains unchanged:
-  - seed 0: steps `69`, reward `-1220`, final wave `3`, base HP `-21`.
-  - seed 1: steps `66`, reward `-1165`, final wave `3`, base HP `-21`.
-  - seed 2: steps `55`, reward `-1275`, final wave `3`, base HP `0`.
-  - seed 3: steps `60`, reward `-1185`, final wave `3`, base HP `-16`.
-  - seed 4: steps `57`, reward `-1210`, final wave `3`, base HP `-1`.
-- Budgeted-wave A/B smoke remains unchanged:
-  - seed 0: steps `129`, reward `-434`, final wave `5`, base HP `-13`.
-  - seed 1: steps `207`, reward `396`, final wave `8`, base HP `-21`.
-  - seed 2: steps `147`, reward `77`, final wave `6`, base HP `-7`.
-  - seed 3: steps `123`, reward `-484`, final wave `5`, base HP `-8`.
-  - seed 4: steps `142`, reward `-158`, final wave `6`, base HP `-16`.
+- `bench_engine`: `379932` steps/s over 2992 steps after static table warmup.
+- Previous warmed tower-targeting benchmark: `371036` steps/s.
+- Previous pre-targeting baseline: about `354620` steps/s.
 
 ## Current optimization state
 
@@ -306,6 +308,7 @@ Implemented:
 - Placeable-mask recomputation via one spawn-base cut-cell DFS instead of per-cell pathfinding.
 - Legal-actions cache keyed by `grid_version`, `tower_version`, and `money_version`.
 - Observation distance-to-base reuse through the engine distance cache.
+- Observation static-channel cache keyed by engine pointer, `grid_version`, and `tower_version`.
 - Golden trace semantic lock with fixed hashes.
 - Static DefenseCapacity estimator with current tower damage, spendable-money damage, virtual-base leak cap, raw HP cap, and allowed attack HP.
 - Path-aware greedy DefenseCapacity with path bitboard coverage, static/current differential diagnostics, and build/upgrade candidate gain-per-cost selection.
@@ -330,7 +333,7 @@ Not yet implemented:
 - Config serialization for wave-generation mode.
 - Multi-upgrade lookahead or sequential candidate refresh after a chosen upgrade.
 - Enemy slot pool / stable-index object pool.
-- Observation full static-channel cache.
+- Dedicated observation benchmark app.
 - Debug GUI / trace viewer.
 
 ## Engineering rule
@@ -341,22 +344,15 @@ If the user reports that tests passed without details, treat the phase as valida
 
 ## Next optimization plan
 
-### Phase 4.2J: observation static-channel cache
+### Phase 4.2J2: dedicated observation benchmark
 
-Static and semi-static channels can be cached by version:
+Add a `bench_observation` app to measure high-frequency `make_observation_v1()` cost directly:
 
-- grid blocked
-- spawn/base
-- tower type
-- tower level
-- distance-to-base
-- placeable mask
-
-Dynamic channels are still rewritten every step:
-
-- tower cooldown
-- enemy HP/density/speed/slow
-- base HP, money, wave, spawn timer, to-spawn count
+- warm static tables before timing
+- run fixed and budgeted environments
+- call `make_observation_v1()` repeatedly on unchanged static versions
+- call it across dynamic steps
+- report observations per second and checksum to prevent dead-code elimination
 
 ### Phase 4.2L: EnemySlotPool semantic-preserving refactor
 
