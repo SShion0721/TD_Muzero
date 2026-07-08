@@ -1,5 +1,6 @@
 #include "tdmz/selfplay/trajectory_writer.hpp"
 #include "tdmz/core/action.hpp"
+#include <algorithm>
 #include <condition_variable>
 #include <cstring>
 #include <deque>
