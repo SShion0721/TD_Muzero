@@ -99,6 +99,7 @@ private:
     std::vector<Tower> towers_;
     std::vector<Enemy> enemies_;
     std::vector<EnemySpec> enemies_to_spawn_;
+    std::vector<int> enemy_bucket_next_scratch_;
 
     uint64_t seed_;
     PythonRNG rng_;
