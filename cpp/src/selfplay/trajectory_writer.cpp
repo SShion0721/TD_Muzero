@@ -1,11 +1,47 @@
 #include "tdmz/selfplay/trajectory_writer.hpp"
+#include "tdmz/core/action.hpp"
+#include <cstring>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <stdexcept>
 
 namespace tdmz {
 
 namespace {
+
+constexpr char kBinaryMagic[8] = {'T', 'D', 'M', 'Z', 'S', 'P', 'B', '1'};
+constexpr uint32_t kBinaryVersion = 1;
+
+#pragma pack(push, 1)
+struct BinaryHistoryHeader {
+    char magic[8];
+    uint32_t version;
+    uint32_t step_count;
+    uint32_t observation_size;
+    uint32_t policy_size;
+    uint32_t legal_mask_size;
+    uint64_t seed;
+    int32_t max_steps;
+    uint32_t terminal;
+    float total_reward;
+};
+
+struct BinaryStepHeader {
+    int32_t step_index;
+    int32_t action;
+    float reward;
+    float root_value;
+    uint32_t done;
+    int32_t money;
+    int32_t base_hp;
+    int32_t wave;
+    float time;
+};
+#pragma pack(pop)
+
+static_assert(sizeof(BinaryHistoryHeader) == 48, "Unexpected binary history header size");
+static_assert(sizeof(BinaryStepHeader) == 36, "Unexpected binary step header size");
 
 template <typename T>
 void write_vector(std::ostream& out, const std::vector<T>& values) {
@@ -39,6 +75,55 @@ void write_step_json(std::ostream& out, const GameHistory& history, const Trajec
     out << "}";
 }
 
+template <typename T>
+void write_raw(std::ostream& out, const T& value) {
+    out.write(reinterpret_cast<const char*>(&value), sizeof(T));
+    if (!out) throw std::runtime_error("Failed while writing binary trajectory scalar");
+}
+
+template <typename T>
+void read_raw(std::istream& in, T& value) {
+    in.read(reinterpret_cast<char*>(&value), sizeof(T));
+    if (!in) throw std::runtime_error("Failed while reading binary trajectory scalar");
+}
+
+template <typename T>
+void write_raw_vector(std::ostream& out, const std::vector<T>& values, size_t expected_size) {
+    if (values.size() != expected_size) {
+        throw std::runtime_error("Binary trajectory vector size mismatch");
+    }
+    if (!values.empty()) {
+        out.write(reinterpret_cast<const char*>(values.data()), static_cast<std::streamsize>(values.size() * sizeof(T)));
+        if (!out) throw std::runtime_error("Failed while writing binary trajectory vector");
+    }
+}
+
+template <typename T>
+void read_raw_vector(std::istream& in, std::vector<T>& values, size_t expected_size) {
+    values.resize(expected_size);
+    if (!values.empty()) {
+        in.read(reinterpret_cast<char*>(values.data()), static_cast<std::streamsize>(values.size() * sizeof(T)));
+        if (!in) throw std::runtime_error("Failed while reading binary trajectory vector");
+    }
+}
+
+uint32_t checked_u32(size_t value, const char* name) {
+    if (value > std::numeric_limits<uint32_t>::max()) {
+        throw std::runtime_error(std::string(name) + " exceeds uint32_t range");
+    }
+    return static_cast<uint32_t>(value);
+}
+
+void validate_binary_step_sizes(const GameHistory& history, uint32_t obs_size, uint32_t policy_size, uint32_t legal_size) {
+    for (const auto& step : history.steps) {
+        if (step.observation.size() != obs_size ||
+            step.policy_target.size() != policy_size ||
+            step.legal_mask.size() != legal_size) {
+            throw std::runtime_error("All binary trajectory steps must have identical tensor sizes");
+        }
+    }
+}
+
 } // namespace
 
 void write_history_jsonl(const GameHistory& history, const std::string& path) {
@@ -61,6 +146,94 @@ void write_history_summary_json(const GameHistory& history, const std::string& p
     out << "\"terminal\":" << (history.terminal ? "true" : "false") << ",";
     out << "\"total_reward\":" << history.total_reward;
     out << "}\n";
+}
+
+void write_history_binary(const GameHistory& history, const std::string& path) {
+    std::ofstream out(path, std::ios::binary);
+    if (!out) throw std::runtime_error("Failed to open trajectory binary path");
+
+    uint32_t step_count = checked_u32(history.steps.size(), "step_count");
+    uint32_t obs_size = 0;
+    uint32_t policy_size = 0;
+    uint32_t legal_size = 0;
+    if (!history.steps.empty()) {
+        obs_size = checked_u32(history.steps.front().observation.size(), "observation_size");
+        policy_size = checked_u32(history.steps.front().policy_target.size(), "policy_size");
+        legal_size = checked_u32(history.steps.front().legal_mask.size(), "legal_mask_size");
+        validate_binary_step_sizes(history, obs_size, policy_size, legal_size);
+    }
+
+    BinaryHistoryHeader header{};
+    std::memcpy(header.magic, kBinaryMagic, sizeof(kBinaryMagic));
+    header.version = kBinaryVersion;
+    header.step_count = step_count;
+    header.observation_size = obs_size;
+    header.policy_size = policy_size;
+    header.legal_mask_size = legal_size;
+    header.seed = history.seed;
+    header.max_steps = history.max_steps;
+    header.terminal = history.terminal ? 1u : 0u;
+    header.total_reward = history.total_reward;
+    write_raw(out, header);
+
+    for (const auto& step : history.steps) {
+        BinaryStepHeader sh{};
+        sh.step_index = step.step_index;
+        sh.action = step.action;
+        sh.reward = step.reward;
+        sh.root_value = step.root_value;
+        sh.done = step.done ? 1u : 0u;
+        sh.money = step.money;
+        sh.base_hp = step.base_hp;
+        sh.wave = step.wave;
+        sh.time = step.time;
+        write_raw(out, sh);
+        write_raw_vector(out, step.observation, obs_size);
+        write_raw_vector(out, step.policy_target, policy_size);
+        write_raw_vector(out, step.legal_mask, legal_size);
+    }
+}
+
+GameHistory read_history_binary(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) throw std::runtime_error("Failed to open trajectory binary path");
+
+    BinaryHistoryHeader header{};
+    read_raw(in, header);
+    if (std::memcmp(header.magic, kBinaryMagic, sizeof(kBinaryMagic)) != 0) {
+        throw std::runtime_error("Invalid trajectory binary magic");
+    }
+    if (header.version != kBinaryVersion) {
+        throw std::runtime_error("Unsupported trajectory binary version");
+    }
+
+    GameHistory history;
+    history.seed = header.seed;
+    history.max_steps = header.max_steps;
+    history.terminal = header.terminal != 0;
+    history.total_reward = header.total_reward;
+    history.steps.reserve(header.step_count);
+
+    for (uint32_t i = 0; i < header.step_count; ++i) {
+        BinaryStepHeader sh{};
+        read_raw(in, sh);
+        TrajectoryStep step;
+        step.step_index = sh.step_index;
+        step.action = sh.action;
+        step.reward = sh.reward;
+        step.root_value = sh.root_value;
+        step.done = sh.done != 0;
+        step.money = sh.money;
+        step.base_hp = sh.base_hp;
+        step.wave = sh.wave;
+        step.time = sh.time;
+        read_raw_vector(in, step.observation, header.observation_size);
+        read_raw_vector(in, step.policy_target, header.policy_size);
+        read_raw_vector(in, step.legal_mask, header.legal_mask_size);
+        history.steps.push_back(std::move(step));
+    }
+
+    return history;
 }
 
 } // namespace tdmz
