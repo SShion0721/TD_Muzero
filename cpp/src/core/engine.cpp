@@ -128,6 +128,7 @@ std::vector<EnemySpec> TDEngine::get_budgeted_wave_enemies() {
     BudgetedWaveConfig wave_cfg;
     auto budget = estimate_attack_budget(*this, attack_cfg);
     auto wave = generate_budgeted_wave(budget, wave_cfg);
+    rng_.shuffle(wave.enemies);
     return wave.enemies;
 }
 
