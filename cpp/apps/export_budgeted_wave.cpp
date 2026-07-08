@@ -20,7 +20,10 @@ static void print_result(const char* name, const BudgetedWaveResult& r) {
               << "\"regular_hp\":" << r.regular_hp << ","
               << "\"fast_hp\":" << r.fast_hp << ","
               << "\"tank_hp\":" << r.tank_hp << ","
-              << "\"boss_hp\":" << r.boss_hp
+              << "\"boss_hp\":" << r.boss_hp << ","
+              << "\"elite_bonus_hp\":" << r.elite_bonus_hp << ","
+              << "\"elite_scaled_count\":" << r.elite_scaled_count << ","
+              << "\"max_enemy_hp\":" << r.max_enemy_hp
               << "}" << std::endl;
 }
 
