@@ -24,6 +24,28 @@ void write_histories_binary_shard(const std::vector<GameHistory>& histories, con
 std::vector<GameHistory> read_histories_binary_shard(const std::string& path);
 GameHistory read_history_binary_shard_at(const std::string& path, size_t index);
 
+// Cached reader for high-throughput replay / dataset loading.
+// It keeps the shard file open and caches the offset table, avoiding per-sample
+// reopen and offset-table parsing overhead.
+class BinaryShardReader {
+public:
+    explicit BinaryShardReader(const std::string& path);
+    ~BinaryShardReader();
+
+    BinaryShardReader(const BinaryShardReader&) = delete;
+    BinaryShardReader& operator=(const BinaryShardReader&) = delete;
+
+    size_t history_count() const;
+    const std::string& path() const;
+    GameHistory read_at(size_t index);
+    std::vector<GameHistory> read_all();
+
+private:
+    std::string path_;
+    std::ifstream in_;
+    std::vector<uint64_t> offsets_;
+};
+
 // Streaming shard writer for production self-play generation.
 // This avoids keeping all generated games in RAM before writing a shard.
 class BinaryShardWriter {
