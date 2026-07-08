@@ -74,27 +74,15 @@ The current direction is to move the old Python prototype toward a fast C++ engi
   - Uses `virtual_base_hp`, not real `base_hp`, for leak capacity to avoid a defender lowering future budgets by intentionally leaking.
   - Added `test_defense_capacity` and `export_defense_capacity`.
   - Validation PASS: normal CTest `7/7` passed, Torch CTest `10/10` passed.
-  - Latest `export_defense_capacity` output:
-    - `empty_seed0`: current `0`, spendable `600`, leak `990`, raw `1590`, allowed `1431`, placeable `119`, selected `4 x Basic`.
-    - `one_basic_seed0`: current `160`, spendable `450`, leak `990`, raw `1600`, allowed `1440`, placeable `118`, selected `3 x Basic`.
-    - `basic_sniper_seed0`: current `460`, spendable `150`, leak `990`, raw `1600`, allowed `1440`, placeable `117`, selected `1 x Basic`.
 
 - Phase 4.3B: path-aware greedy DefenseCapacity
   - Added current main-path extraction and path bitboard coverage through `Bitboard128`.
   - Uses `BoardTables::range_mask[type][level][cell] & path_bb` to discount towers that do not cover the current spawn-to-base path.
   - Keeps static tower capacity as a debug upper-bound field while using path-aware capacity for the actual budget.
-  - Added differential candidate valuation for builds and upgrades:
-    - build gain: path-aware level-1 tower capacity at a placeable cell.
-    - upgrade gain: path-aware upgraded tower capacity minus current tower capacity.
-  - Greedily selects build / upgrade candidates by `cap_gain / cost`, with one build per cell and one upgrade per existing tower in this approximation pass.
+  - Added differential candidate valuation for builds and upgrades.
+  - Greedily selects build / upgrade candidates by `cap_gain / cost`.
   - Added diagnostics for path length, static/current capacity delta, build/upgrade candidate counts, selected build/upgrade cap, and best value-per-cost.
   - Validation PASS: normal CTest `7/7` passed, Torch CTest `10/10` passed.
-  - Latest `export_defense_capacity` output:
-    - `empty_seed0`: current `0`, spendable `600`, leak `990`, raw `1590`, allowed `1431`, path_len `10`, build candidates `296`, selected `4 x Basic`.
-    - `off_path_basic_seed0`: current `0`, static `160`, spendable `450`, raw `1440`, allowed `1296`; off-path tower is correctly discounted to zero current capacity.
-    - `one_path_basic_seed0`: current `160`, static `160`, spendable `450`, raw `1600`, allowed `1440`, upgrade candidates `1`.
-    - `path_basic_sniper_seed0`: current `460`, static `460`, spendable `150`, raw `1600`, allowed `1440`, upgrade candidates `2`.
-    - `static_path_basic_sniper_seed0`: current `460`, spendable `150`, raw `1600`, allowed `1440`, build candidates `468`, showing the static mode keeps many more candidate cells than path-aware mode.
 
 - Phase 4.3C: AttackBudget API
   - Added `AttackBudgetConfig`, `AttackBudgetResult`, and `estimate_attack_budget()`.
@@ -105,16 +93,10 @@ The current direction is to move the old Python prototype toward a fast C++ engi
   - Adds tank unlock and boss unlock rules; boss is restricted to odd waves by default.
   - Added `test_attack_budget` and `export_attack_budget`.
   - Validation PASS: normal CTest `8/8` passed, Torch CTest `11/11` passed.
-  - Latest `export_attack_budget` output:
-    - `empty_seed0`: defense `1431`, wave cap `515`, allowed `515`, fast cap `180.25`, tank/boss locked.
-    - `path_basic_seed0`: defense `1440`, wave cap `515`, allowed `515`, fast cap `180.25`, tank/boss locked.
-    - `path_basic_sniper_seed0`: defense `1440`, wave cap `515`, allowed `515`, fast cap `180.25`, tank/boss locked.
-    - `unclamped_path_basic_sniper_seed0`: defense `1440`, allowed `1440`, fast cap `504`, tank/boss locked.
-    - `low_virtual_base_seed0`: defense `711`, allowed `711` with wave cap disabled, showing virtual-base leak cap affects the budget.
 
 - Phase 4.3D / 4.3D2: budgeted wave generator and elite budget absorption
   - Added `BudgetedWaveConfig`, `BudgetedWaveResult`, and `generate_budgeted_wave()`.
-  - Converts `AttackBudgetResult` into deterministic `EnemySpec` waves without changing the engine's fixed `get_wave_enemies()` path.
+  - Converts `AttackBudgetResult` into deterministic `EnemySpec` waves without changing the engine's fixed wave path.
   - Uses regular / fast / tank / boss ratios, tank/boss unlocks, and archetype HP caps from AttackBudget.
   - Adds slot-aware greedy generation: regular backbone first, then boss/tank, then regular budget, then fast fillers.
   - Adds elite scaling to absorb remaining budget when `max_enemy_count` prevents adding more enemies.
@@ -122,11 +104,6 @@ The current direction is to move the old Python prototype toward a fast C++ engi
   - Added diagnostics: `elite_bonus_hp`, `elite_scaled_count`, and `max_enemy_hp`.
   - Added `test_budgeted_wave_generator` and `export_budgeted_wave`.
   - Validation PASS: normal CTest `9/9` passed.
-  - Latest `export_budgeted_wave` output:
-    - `budget_empty_seed0`: requested `515`, used `515`, enemies `21`, regular `10`, fast `11`, elite bonus `22.9`.
-    - `budget_path_basic_sniper_seed0`: requested `515`, used `515`, same wave-1 capped budget and wave composition as empty because the wave cap dominates.
-    - `synthetic_wave3_budget2500`: requested `2500`, used `2500`, enemies `45`, regular `19`, fast `25`, tank `1`, elite bonus `10.001`.
-    - `synthetic_wave5_budget30000`: requested `30000`, used `30000`, enemies `64`, regular `55`, tank `8`, boss `1`, elite bonus `16515`, elite-scaled enemies `38`, max enemy HP `1450`.
 
 - Phase 4.3E: engine wave generation mode switch
   - Integrated budgeted wave generation into `TDEngine` behind a runtime feature flag.
@@ -137,6 +114,17 @@ The current direction is to move the old Python prototype toward a fast C++ engi
   - Added `test_engine_wave_modes` and `export_engine_wave_modes`.
   - Validation PASS: fixed mode keeps wave-1 count `9` and total HP `281.2`; budgeted mode produces count `21` and total HP `515`; runtime toggling regenerates the pending queue correctly.
   - Golden trace semantic lock remains unchanged: combined hash `0x595648689a6a7435`.
+
+- Phase 4.3F: fixed-wave versus budgeted-wave A/B smoke
+  - Added `export_wave_mode_ab` diagnostic app.
+  - Runs seeds `0..4` in both fixed and budgeted modes with the same scripted economy policy.
+  - Records steps, total reward, final wave, base HP, money, game-over status, tower count, active enemies, pending enemies, and enemy HP totals.
+  - Added shuffle for budgeted waves inside `TDEngine::get_budgeted_wave_enemies()` so seed affects spawn order.
+  - Validation PASS: budgeted mode is no longer seed-invariant and is materially smoother than fixed mode in the smoke script.
+  - Latest A/B smoke summary:
+    - Fixed mode: steps `55..69`, final wave always `3`, total reward about `-1275..-1165`, game over early.
+    - Budgeted mode: steps `123..207`, final wave `5..8`, total reward `-484..396`, game over later.
+    - Budgeted mode reaches higher waves and produces more varied outcomes after wave shuffle is enabled.
 
 ## Current gameplay rules
 
@@ -217,6 +205,7 @@ Budgeted mode uses:
 - path-aware DefenseCapacity
 - AttackBudget wave-stage cap and archetype caps
 - deterministic BudgetedWaveGenerator
+- RNG shuffle of the generated queue for seed-dependent spawn order
 - elite scaling for unused budget when enemy-count slots are saturated
 
 ## Current test targets
@@ -270,26 +259,28 @@ Benchmarks and exports:
 .\build\Release\export_attack_budget.exe
 .\build\Release\export_budgeted_wave.exe
 .\build\Release\export_engine_wave_modes.exe
+.\build\Release\export_wave_mode_ab.exe
 
 .\build_torch\Release\bench_engine.exe
 .\build_torch\Release\bench_mcts.exe
 ```
 
-Latest local validation after Engine Wave Mode 4.3E:
+Latest local validation after Wave Mode A/B 4.3F:
 
 - Normal test targets: `10`.
 - Golden trace combined hash: `0x595648689a6a7435`.
-- `export_engine_wave_modes`:
-  - `fixed_wave_seed0`: fixed mode, wave `1`, pending count `9`, total HP `281.2`, attack budget `515`.
-  - `budgeted_wave_seed0`: budgeted mode, wave `1`, pending count `21`, total HP `515`, attack budget `515`.
-  - `toggled_budgeted_wave_seed0`: runtime toggle ON regenerates count `21`, total HP `515`.
-  - `toggled_fixed_wave_seed0`: runtime toggle OFF regenerates count `9`, total HP `281.2`.
-- Previous benchmarks:
-  - `bench_engine`: `354620` steps/s.
-  - Torch `bench_engine`: `359361` steps/s.
-  - `bench_mcts`: `62427.5` simulations/s.
-  - Torch `bench_mcts`: `61515.4` simulations/s.
-  - `generate_selfplay_dummy`: `steps=58`, `total_reward=-2150`.
+- Fixed-wave A/B smoke:
+  - seed 0: steps `69`, reward `-1220`, final wave `3`, base HP `-21`.
+  - seed 1: steps `66`, reward `-1165`, final wave `3`, base HP `-21`.
+  - seed 2: steps `55`, reward `-1275`, final wave `3`, base HP `0`.
+  - seed 3: steps `60`, reward `-1185`, final wave `3`, base HP `-16`.
+  - seed 4: steps `57`, reward `-1210`, final wave `3`, base HP `-1`.
+- Budgeted-wave A/B smoke after shuffle fix:
+  - seed 0: steps `129`, reward `-434`, final wave `5`, base HP `-13`.
+  - seed 1: steps `207`, reward `396`, final wave `8`, base HP `-21`.
+  - seed 2: steps `147`, reward `77`, final wave `6`, base HP `-7`.
+  - seed 3: steps `123`, reward `-484`, final wave `5`, base HP `-8`.
+  - seed 4: steps `142`, reward `-158`, final wave `6`, base HP `-16`.
 
 ## Current optimization state
 
@@ -309,6 +300,7 @@ Implemented:
 - AttackBudget API with wave-stage cap, enemy archetype ratio caps, tank unlock, and boss unlock rules.
 - Budgeted wave generator with ratio allocation, unlock handling, deterministic slot-aware fill, and elite budget absorption.
 - Runtime engine wave-generation switch between fixed waves and budgeted waves.
+- Wave-mode A/B smoke diagnostics.
 - Perf counters:
   - `pathfind_calls`
   - `placeable_recompute`
@@ -317,7 +309,6 @@ Implemented:
 
 Not yet implemented:
 
-- A/B self-play comparison between fixed-wave and budgeted-wave modes.
 - Config serialization for wave-generation mode.
 - Multi-upgrade lookahead or sequential candidate refresh after a chosen upgrade.
 - Exact tower attack acceleration using range masks and enemy cell buckets.
@@ -332,22 +323,14 @@ If the user reports that tests passed without details, treat the phase as valida
 
 ## Next optimization plan
 
-### Phase 4.3F: fixed-wave versus budgeted-wave self-play A/B smoke
-
-Now that the engine switch is available:
-
-- Add an app that runs short fixed-wave and budgeted-wave dummy/self-play episodes with identical seeds.
-- Record episode length, total reward, final wave, base HP, deaths/leaks, and pending/enemy counts.
-- Keep this as a smoke/diagnostic tool first, not a training default.
-- Use the result to decide whether budgeted waves should remain a research option or become a future default.
-
 ### Phase 4.2I: tower attack acceleration
 
-Use precomputed `range_mask[type][level][cell]` as a coarse filter before exact float-distance checks:
+Budgeted waves increase episode length and can increase active/pending enemy pressure, so the tower attack loop becomes more important. Use precomputed `range_mask[type][level][cell]` as a coarse filter before exact float-distance checks:
 
 - Maintain enemy rounded-cell buckets.
 - For each tower, intersect its range mask with occupied enemy cells.
 - Only run exact distance checks on candidate enemies in covered cells.
+- Keep damage semantics unchanged and validate with golden traces.
 
 ### Phase 4.2J: observation static-channel cache
 
