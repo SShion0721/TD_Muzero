@@ -277,33 +277,71 @@ GameHistory read_history_binary(const std::string& path) {
     return read_history_binary_stream(in);
 }
 
-void write_histories_binary_shard(const std::vector<GameHistory>& histories, const std::string& path) {
-    std::ofstream out(path, std::ios::binary);
-    if (!out) throw std::runtime_error("Failed to open trajectory binary shard path");
+BinaryShardWriter::BinaryShardWriter(const std::string& path, size_t expected_history_count)
+    : path_(path),
+      expected_history_count_(expected_history_count),
+      written_count_(0),
+      closed_(false),
+      out_(path, std::ios::binary),
+      offsets_(expected_history_count, 0) {
+    if (!out_) throw std::runtime_error("Failed to open trajectory binary shard path");
 
     BinaryShardHeader header{};
     std::memcpy(header.magic, kShardMagic, sizeof(kShardMagic));
     header.version = kShardVersion;
-    header.history_count = checked_u32(histories.size(), "history_count");
-    header.offset_table_bytes = static_cast<uint64_t>(histories.size()) * sizeof(uint64_t);
-    write_raw(out, header);
+    header.history_count = checked_u32(expected_history_count, "history_count");
+    header.offset_table_bytes = static_cast<uint64_t>(expected_history_count) * sizeof(uint64_t);
+    write_raw(out_, header);
 
-    std::vector<uint64_t> offsets(histories.size(), 0);
-    const std::streamoff offset_table_start = static_cast<std::streamoff>(sizeof(BinaryShardHeader));
-    for (uint64_t zero : offsets) {
-        write_raw(out, zero);
+    for (size_t i = 0; i < expected_history_count; ++i) {
+        uint64_t zero = 0;
+        write_raw(out_, zero);
+    }
+}
+
+BinaryShardWriter::~BinaryShardWriter() {
+    if (!closed_) {
+        try {
+            close();
+        } catch (...) {
+            // Destructors must not throw. Call close() explicitly in production paths
+            // to surface write/seek/count errors.
+        }
+    }
+}
+
+void BinaryShardWriter::write_history(const GameHistory& history) {
+    if (closed_) throw std::runtime_error("Cannot write to a closed binary shard");
+    if (written_count_ >= expected_history_count_) {
+        throw std::runtime_error("Binary shard writer received more histories than expected");
+    }
+    offsets_[written_count_] = checked_u64_stream_pos(out_);
+    write_history_binary_stream(out_, history);
+    ++written_count_;
+}
+
+void BinaryShardWriter::close() {
+    if (closed_) return;
+    if (written_count_ != expected_history_count_) {
+        throw std::runtime_error("Binary shard writer closed before all expected histories were written");
     }
 
-    for (size_t i = 0; i < histories.size(); ++i) {
-        offsets[i] = checked_u64_stream_pos(out);
-        write_history_binary_stream(out, histories[i]);
+    out_.seekp(static_cast<std::streamoff>(sizeof(BinaryShardHeader)), std::ios::beg);
+    if (!out_) throw std::runtime_error("Failed to seek binary shard offset table");
+    for (uint64_t offset : offsets_) {
+        write_raw(out_, offset);
     }
+    out_.close();
+    if (!out_) throw std::runtime_error("Failed to close trajectory binary shard path");
+    closed_ = true;
+}
 
-    out.seekp(offset_table_start, std::ios::beg);
-    if (!out) throw std::runtime_error("Failed to seek binary shard offset table");
-    for (uint64_t offset : offsets) {
-        write_raw(out, offset);
+void write_histories_binary_shard(const std::vector<GameHistory>& histories, const std::string& path) {
+    BinaryShardWriter writer(path, histories.size());
+    for (const auto& history : histories) {
+        writer.write_history(history);
     }
+    writer.close();
 }
 
 std::vector<GameHistory> read_histories_binary_shard(const std::string& path) {
