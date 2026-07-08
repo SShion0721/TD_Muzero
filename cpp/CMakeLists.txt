@@ -61,3 +61,6 @@ target_link_libraries(bench_mcts tdmz_core)
 
 add_executable(generate_selfplay_dummy apps/generate_selfplay_dummy.cpp)
 target_link_libraries(generate_selfplay_dummy tdmz_core)
+
+add_executable(generate_selfplay_shards apps/generate_selfplay_shards.cpp)
+target_link_libraries(generate_selfplay_shards tdmz_core)
