@@ -127,6 +127,7 @@ struct BoardTables {
 
     // [tower_type][level][cell]
     std::array<std::array<std::array<Bitboard128, kCells>, kTowerMaxLevel + 1>, kBuildTypes> range_mask{};
+    std::array<std::array<std::array<Bitboard128, kCells>, kTowerMaxLevel + 1>, kBuildTypes> range_mask_expanded8{};
 
     std::array<ActionType, kActionSpaceSize> action_type{};
     std::array<int, kActionSpaceSize> action_x{};
