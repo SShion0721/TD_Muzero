@@ -13,27 +13,6 @@ namespace tdmz {
 namespace {
 constexpr int kInf = 1000000000;
 
-Bitboard128 expand_mask_8(Bitboard128 mask) {
-    const auto& tables = board_tables();
-    Bitboard128 expanded = mask;
-    Bitboard128 work = mask;
-    while (work) {
-        int c = work.pop_lsb();
-        int cx = tables.x[c];
-        int cy = tables.y[c];
-        for (int dy = -1; dy <= 1; ++dy) {
-            for (int dx = -1; dx <= 1; ++dx) {
-                int nx = cx + dx;
-                int ny = cy + dy;
-                if (valid_cell_xy(nx, ny)) {
-                    expanded |= tables.cell_bb[cell_id(nx, ny)];
-                }
-            }
-        }
-    }
-    return expanded;
-}
-
 int enemy_rounded_cell(const Enemy& enemy) {
     int ex = static_cast<int>(std::round(enemy.x));
     int ey = static_cast<int>(std::round(enemy.y));
@@ -588,17 +567,21 @@ StepResult TDEngine::step_time(float dt) {
     }
 
     const auto& tables = board_tables();
-    std::array<std::vector<int>, kCells> enemy_buckets;
-    std::vector<int> enemy_cells(enemies_.size(), -1);
+    std::array<int, kCells> bucket_head;
+    bucket_head.fill(-1);
+    std::vector<int> bucket_next(enemies_.size(), -1);
     Bitboard128 enemy_occupancy = Bitboard128::zero();
+    bool has_offboard_enemy = false;
     if (!enemies_.empty()) {
         ++perf_.enemy_bucket_recompute;
         for (int i = 0; i < static_cast<int>(enemies_.size()); ++i) {
             int c = enemy_rounded_cell(enemies_[i]);
-            enemy_cells[i] = c;
             if (c >= 0) {
-                enemy_buckets[c].push_back(i);
+                bucket_next[i] = bucket_head[c];
+                bucket_head[c] = i;
                 enemy_occupancy |= tables.cell_bb[c];
+            } else {
+                has_offboard_enemy = true;
             }
         }
     }
@@ -614,12 +597,12 @@ StepResult TDEngine::step_time(float dt) {
                 int tower_cell = cell_id(tower.x, tower.y);
                 int tower_type = static_cast<int>(tower.type);
                 int tower_level = std::max(1, std::min(kTowerMaxLevel, tower.level));
-                Bitboard128 candidate_cells = expand_mask_8(tables.range_mask[tower_type][tower_level][tower_cell]) & enemy_occupancy;
+                Bitboard128 candidate_cells = tables.range_mask_expanded8[tower_type][tower_level][tower_cell] & enemy_occupancy;
                 perf_.tower_candidate_cells += static_cast<uint64_t>(candidate_cells.popcount());
 
                 while (candidate_cells) {
                     int c = candidate_cells.pop_lsb();
-                    for (int enemy_index : enemy_buckets[c]) {
+                    for (int enemy_index = bucket_head[c]; enemy_index >= 0; enemy_index = bucket_next[enemy_index]) {
                         Enemy& enemy = enemies_[enemy_index];
                         float dx = enemy.x - static_cast<float>(tower.x);
                         float dy = enemy.y - static_cast<float>(tower.y);
@@ -633,9 +616,9 @@ StepResult TDEngine::step_time(float dt) {
                 }
 
                 // Extremely defensive fallback for any future off-board/interpolated enemy states.
-                if (best_index < 0) {
+                if (best_index < 0 && has_offboard_enemy) {
                     for (int enemy_index = 0; enemy_index < static_cast<int>(enemies_.size()); ++enemy_index) {
-                        if (enemy_cells[enemy_index] >= 0) continue;
+                        if (enemy_rounded_cell(enemies_[enemy_index]) >= 0) continue;
                         Enemy& enemy = enemies_[enemy_index];
                         float dx = enemy.x - static_cast<float>(tower.x);
                         float dy = enemy.y - static_cast<float>(tower.y);
