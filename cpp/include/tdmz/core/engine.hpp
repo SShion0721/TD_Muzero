@@ -67,6 +67,12 @@ public:
     int width() const { return width_; }
     int height() const { return height_; }
 
+    uint64_t grid_version() const { return grid_version_; }
+    uint64_t tower_version() const { return tower_version_; }
+    uint64_t money_version() const { return money_version_; }
+    uint64_t enemy_version() const { return enemy_version_; }
+    uint64_t wave_version() const { return wave_version_; }
+
     bool use_budgeted_waves() const { return use_budgeted_waves_; }
     void set_use_budgeted_waves(bool enabled, bool regenerate_pending_wave = false);
 
