@@ -54,7 +54,18 @@ The current direction is to move the old Python prototype toward a fast C++ engi
   - `legal_actions()` now uses precomputed action ids instead of recomputing flat ids.
   - Added `test_board_tables` for bitboard, geometry, action table, range mask, and BFS regression checks.
   - Validation PASS: normal CTest `5/5` passed, Torch CTest `8/8` passed.
-  - Latest benchmark: normal `bench_engine` about 354k steps/s, Torch `bench_engine` about 359k steps/s; `bench_mcts` remains about 61k-62k simulations/s.
+  - Latest benchmark before tower-targeting work: normal `bench_engine` about `354620` steps/s, Torch `bench_engine` about `359361` steps/s; `bench_mcts` remains about 61k-62k simulations/s.
+
+- Phase 4.2I / 4.2I2-I4: tower attack acceleration and scratch-buffer targeting
+  - Replaced tower targeting `hypot` checks with squared-distance checks.
+  - Added precomputed `BoardTables::range_mask_expanded8` for conservative tower candidate-cell filtering.
+  - Added optional bucket/range-mask targeting for large enemy counts.
+  - Added hybrid threshold targeting: small enemy counts use full scan; large enemy counts use bucket + expanded range mask.
+  - Replaced per-step `array<vector<int>, 121>` bucket allocation with a fixed-head linked-list bucket and reusable `enemy_bucket_next_scratch_` buffer.
+  - Added steady-state warmup to `bench_engine` so one-time static table construction is not counted.
+  - Added perf counters: `enemy_bucket_recompute`, `tower_candidate_cells`, `tower_exact_distance_checks`, and `tower_aoe_distance_checks`.
+  - Validation PASS: golden trace combined hash remains `0x595648689a6a7435`.
+  - Latest warmed `bench_engine`: `371036` steps/s over 2992 steps, exceeding the previous 354k baseline.
 
 - Phase 4.2K: golden trace semantic lock
   - Added deterministic golden trace infrastructure with fixed seeds and fixed action scripts.
@@ -265,17 +276,18 @@ Benchmarks and exports:
 .\build_torch\Release\bench_mcts.exe
 ```
 
-Latest local validation after Wave Mode A/B 4.3F:
+Latest local validation after Tower Targeting 4.2I4:
 
 - Normal test targets: `10`.
 - Golden trace combined hash: `0x595648689a6a7435`.
-- Fixed-wave A/B smoke:
+- `bench_engine`: `371036` steps/s over 2992 steps after static table warmup.
+- Fixed-wave A/B smoke remains unchanged:
   - seed 0: steps `69`, reward `-1220`, final wave `3`, base HP `-21`.
   - seed 1: steps `66`, reward `-1165`, final wave `3`, base HP `-21`.
   - seed 2: steps `55`, reward `-1275`, final wave `3`, base HP `0`.
   - seed 3: steps `60`, reward `-1185`, final wave `3`, base HP `-16`.
   - seed 4: steps `57`, reward `-1210`, final wave `3`, base HP `-1`.
-- Budgeted-wave A/B smoke after shuffle fix:
+- Budgeted-wave A/B smoke remains unchanged:
   - seed 0: steps `129`, reward `-434`, final wave `5`, base HP `-13`.
   - seed 1: steps `207`, reward `396`, final wave `8`, base HP `-21`.
   - seed 2: steps `147`, reward `77`, final wave `6`, base HP `-7`.
@@ -287,7 +299,7 @@ Latest local validation after Wave Mode A/B 4.3F:
 Implemented:
 
 - `Bitboard128` for 121-cell board occupancy.
-- `BoardTables` singleton with precomputed geometry, action ids, and range masks.
+- `BoardTables` singleton with precomputed geometry, action ids, tower range masks, and expanded range masks.
 - Fixed-array BFS pathfinding with `dist[121]`, `parent[121]`, and `queue[121]`.
 - Cached base-distance and next-step-to-base fields keyed by `grid_version`.
 - Placeable-mask cache keyed by `grid_version`.
@@ -301,17 +313,23 @@ Implemented:
 - Budgeted wave generator with ratio allocation, unlock handling, deterministic slot-aware fill, and elite budget absorption.
 - Runtime engine wave-generation switch between fixed waves and budgeted waves.
 - Wave-mode A/B smoke diagnostics.
+- Hybrid tower targeting with squared-distance full scan for small enemy counts and bucket/range-mask targeting for large enemy counts.
+- Reusable scratch buffer for enemy bucket linked lists.
 - Perf counters:
   - `pathfind_calls`
   - `placeable_recompute`
   - `legal_recompute`
   - `base_distance_recompute`
+  - `enemy_bucket_recompute`
+  - `tower_candidate_cells`
+  - `tower_exact_distance_checks`
+  - `tower_aoe_distance_checks`
 
 Not yet implemented:
 
 - Config serialization for wave-generation mode.
 - Multi-upgrade lookahead or sequential candidate refresh after a chosen upgrade.
-- Exact tower attack acceleration using range masks and enemy cell buckets.
+- Enemy slot pool / stable-index object pool.
 - Observation full static-channel cache.
 - Debug GUI / trace viewer.
 
@@ -322,15 +340,6 @@ When a phase is completed and validated, record the completed work, validation r
 If the user reports that tests passed without details, treat the phase as validated by default and update this README accordingly.
 
 ## Next optimization plan
-
-### Phase 4.2I: tower attack acceleration
-
-Budgeted waves increase episode length and can increase active/pending enemy pressure, so the tower attack loop becomes more important. Use precomputed `range_mask[type][level][cell]` as a coarse filter before exact float-distance checks:
-
-- Maintain enemy rounded-cell buckets.
-- For each tower, intersect its range mask with occupied enemy cells.
-- Only run exact distance checks on candidate enemies in covered cells.
-- Keep damage semantics unchanged and validate with golden traces.
 
 ### Phase 4.2J: observation static-channel cache
 
@@ -348,6 +357,17 @@ Dynamic channels are still rewritten every step:
 - tower cooldown
 - enemy HP/density/speed/slow
 - base HP, money, wave, spawn timer, to-spawn count
+
+### Phase 4.2L: EnemySlotPool semantic-preserving refactor
+
+A full object-pool refactor should be separate from targeting changes because enemy vector order affects tie-breaking and golden traces. The safe design is:
+
+- stable slot array
+- alive flags
+- free list
+- deterministic alive iteration order
+- separate compact export view if needed
+- golden trace hash lock before and after the refactor
 
 ### Phase 4.4: debug GUI / trace viewer
 
