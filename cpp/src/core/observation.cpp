@@ -5,6 +5,80 @@
 
 namespace tdmz {
 
+namespace {
+
+constexpr uint64_t kInvalidVersion = ~0ULL;
+constexpr int kObsPlane = kBoardW * kBoardH;
+
+inline int obs_index(int c, int y, int x) {
+    return (c * kBoardH + y) * kBoardW + x;
+}
+
+struct ObservationStaticCache {
+    const TDEngine* env = nullptr;
+    uint64_t grid_version = kInvalidVersion;
+    uint64_t tower_version = kInvalidVersion;
+    Observation static_obs;
+};
+
+thread_local ObservationStaticCache g_static_cache;
+
+const Observation& get_static_observation_channels(const TDEngine& env) {
+    if (g_static_cache.env == &env &&
+        g_static_cache.grid_version == env.grid_version() &&
+        g_static_cache.tower_version == env.tower_version() &&
+        g_static_cache.static_obs.size() == OBS_CHANNELS * kObsPlane) {
+        return g_static_cache.static_obs;
+    }
+
+    g_static_cache.env = &env;
+    g_static_cache.grid_version = env.grid_version();
+    g_static_cache.tower_version = env.tower_version();
+    g_static_cache.static_obs.assign(OBS_CHANNELS * kObsPlane, 0.0f);
+
+    auto at = [&](int c, int y, int x) -> float& {
+        return g_static_cache.static_obs[obs_index(c, y, x)];
+    };
+
+    for (int y = 0; y < kBoardH; ++y) {
+        for (int x = 0; x < kBoardW; ++x) {
+            if (env.grid()[y][x] == 1) at(CH_BLOCKED, y, x) = 1.0f;
+        }
+    }
+
+    at(CH_SPAWN, env.spawn_y(), env.spawn_x()) = 1.0f;
+    at(CH_BASE, env.base_y(), env.base_x()) = 1.0f;
+
+    for (const auto& tower : env.towers()) {
+        int x = tower.x;
+        int y = tower.y;
+        if (tower.type == TowerType::Basic) at(CH_TOWER_BASIC, y, x) = 1.0f;
+        else if (tower.type == TowerType::Sniper) at(CH_TOWER_SNIPER, y, x) = 1.0f;
+        else if (tower.type == TowerType::AOE) at(CH_TOWER_AOE, y, x) = 1.0f;
+        else if (tower.type == TowerType::Slow) at(CH_TOWER_SLOW, y, x) = 1.0f;
+
+        at(CH_TOWER_LEVEL, y, x) = std::min(1.0f, static_cast<float>(tower.level) / static_cast<float>(kTowerMaxLevel));
+    }
+
+    auto placeable_mask = env.compute_placeable_mask();
+    for (int y = 0; y < kBoardH; ++y) {
+        for (int x = 0; x < kBoardW; ++x) {
+            int cell = cell_id(x, y);
+            if (placeable_mask[y][x]) {
+                at(CH_PLACEABLE_MASK, y, x) = 1.0f;
+            }
+            int dist = env.distance_to_base_cell(cell);
+            if (dist < 1000000000) {
+                at(CH_DISTANCE_TO_BASE, y, x) = static_cast<float>(dist) / 20.0f;
+            }
+        }
+    }
+
+    return g_static_cache.static_obs;
+}
+
+} // namespace
+
 Observation make_observation_python_parity(const TDEngine& env) {
     int w = env.width();
     int h = env.height();
@@ -57,38 +131,22 @@ std::array<int, 3> observation_shape_python_parity() {
 }
 
 Observation make_observation_v1(const TDEngine& env) {
-    int w = env.width();
-    int h = env.height();
-    Observation obs(OBS_CHANNELS * h * w, 0.0f);
+    Observation obs = get_static_observation_channels(env);
 
     auto at = [&](int c, int y, int x) -> float& {
-        return obs[(c * h + y) * w + x];
+        return obs[obs_index(c, y, x)];
     };
-
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            if (env.grid()[y][x] == 1) at(CH_BLOCKED, y, x) = 1.0f;
-        }
-    }
-    at(CH_SPAWN, env.spawn_y(), env.spawn_x()) = 1.0f;
-    at(CH_BASE, env.base_y(), env.base_x()) = 1.0f;
 
     for (const auto& tower : env.towers()) {
         int x = tower.x;
         int y = tower.y;
-        if (tower.type == TowerType::Basic) at(CH_TOWER_BASIC, y, x) = 1.0f;
-        else if (tower.type == TowerType::Sniper) at(CH_TOWER_SNIPER, y, x) = 1.0f;
-        else if (tower.type == TowerType::AOE) at(CH_TOWER_AOE, y, x) = 1.0f;
-        else if (tower.type == TowerType::Slow) at(CH_TOWER_SLOW, y, x) = 1.0f;
-
-        at(CH_TOWER_LEVEL, y, x) = std::min(1.0f, static_cast<float>(tower.level) / static_cast<float>(kTowerMaxLevel));
         at(CH_TOWER_COOLDOWN, y, x) = tower.cooldown / tower.cooldown_max;
     }
 
     for (const auto& enemy : env.enemies()) {
         int gx = static_cast<int>(std::round(enemy.x));
         int gy = static_cast<int>(std::round(enemy.y));
-        if (gx >= 0 && gx < w && gy >= 0 && gy < h) {
+        if (gx >= 0 && gx < kBoardW && gy >= 0 && gy < kBoardH) {
             at(CH_ENEMY_HP, gy, gx) += enemy.hp / std::max(1.0f, enemy.max_hp);
             at(CH_ENEMY_DENSITY, gy, gx) += 1.0f;
             at(CH_ENEMY_SPEED, gy, gx) = std::max(at(CH_ENEMY_SPEED, gy, gx), enemy.speed / 3.0f);
@@ -102,28 +160,13 @@ Observation make_observation_v1(const TDEngine& env) {
     float spawn_timer_val = env.spawn_timer() / 3.0f;
     float to_spawn_val = env.enemies_to_spawn_count() / 20.0f;
 
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
+    for (int y = 0; y < kBoardH; ++y) {
+        for (int x = 0; x < kBoardW; ++x) {
             at(CH_BASE_HP, y, x) = base_hp_val;
             at(CH_MONEY, y, x) = money_val;
             at(CH_WAVE, y, x) = wave_val;
             at(CH_SPAWN_TIMER, y, x) = spawn_timer_val;
             at(CH_TO_SPAWN_COUNT, y, x) = to_spawn_val;
-        }
-    }
-
-    auto placeable_mask = env.compute_placeable_mask();
-
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            int cell = cell_id(x, y);
-            if (placeable_mask[y][x]) {
-                at(CH_PLACEABLE_MASK, y, x) = 1.0f;
-            }
-            int dist = env.distance_to_base_cell(cell);
-            if (dist < 1000000000) {
-                at(CH_DISTANCE_TO_BASE, y, x) = static_cast<float>(dist) / 20.0f;
-            }
         }
     }
 
