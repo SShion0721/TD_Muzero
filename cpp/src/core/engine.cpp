@@ -1,4 +1,6 @@
 #include "tdmz/core/engine.hpp"
+#include "tdmz/balance/attack_budget.hpp"
+#include "tdmz/balance/budgeted_wave_generator.hpp"
 #include "tdmz/core/pathfinding.hpp"
 #include <algorithm>
 #include <array>
@@ -13,9 +15,13 @@ constexpr int kInf = 1000000000;
 }
 
 TDEngine::TDEngine(int width, int height, uint64_t seed)
+    : TDEngine(width, height, seed, false) {}
+
+TDEngine::TDEngine(int width, int height, uint64_t seed, bool use_budgeted_waves)
     : width_(width), height_(height),
       spawn_x_(0), spawn_y_(height / 2),
       base_x_(width - 1), base_y_(height / 2),
+      use_budgeted_waves_(use_budgeted_waves),
       seed_(seed), rng_(seed) {
     if (width != kBoardW || height != kBoardH) {
         throw std::invalid_argument("TDEngine currently supports only 11x11 boards");
@@ -71,7 +77,6 @@ void TDEngine::reset(uint64_t seed) {
     enemy_id_counter_ = 0;
 
     wave_ = 1;
-    enemies_to_spawn_ = get_wave_enemies();
     spawn_timer_ = 0.0f;
     time_ = 0.0f;
     game_over_ = false;
@@ -82,9 +87,11 @@ void TDEngine::reset(uint64_t seed) {
     ++enemy_version_;
     ++wave_version_;
     invalidate_all_caches();
+
+    enemies_to_spawn_ = get_wave_enemies();
 }
 
-std::vector<EnemySpec> TDEngine::get_wave_enemies() {
+std::vector<EnemySpec> TDEngine::get_fixed_wave_enemies() {
     std::vector<EnemySpec> format;
     float base_hp = 20.0f + wave_ * 15.0f + (wave_ * wave_) * 2.0f;
 
@@ -114,6 +121,40 @@ std::vector<EnemySpec> TDEngine::get_wave_enemies() {
 
     rng_.shuffle(format);
     return format;
+}
+
+std::vector<EnemySpec> TDEngine::get_budgeted_wave_enemies() {
+    AttackBudgetConfig attack_cfg;
+    BudgetedWaveConfig wave_cfg;
+    auto budget = estimate_attack_budget(*this, attack_cfg);
+    auto wave = generate_budgeted_wave(budget, wave_cfg);
+    return wave.enemies;
+}
+
+std::vector<EnemySpec> TDEngine::get_wave_enemies() {
+    if (use_budgeted_waves_) {
+        return get_budgeted_wave_enemies();
+    }
+    return get_fixed_wave_enemies();
+}
+
+float TDEngine::pending_spawn_total_hp() const {
+    float total = 0.0f;
+    for (const auto& e : enemies_to_spawn_) {
+        total += e.hp;
+    }
+    return total;
+}
+
+void TDEngine::set_use_budgeted_waves(bool enabled, bool regenerate_pending_wave) {
+    if (use_budgeted_waves_ == enabled && !regenerate_pending_wave) {
+        return;
+    }
+    use_budgeted_waves_ = enabled;
+    if (regenerate_pending_wave) {
+        enemies_to_spawn_ = get_wave_enemies();
+        mark_wave_changed();
+    }
 }
 
 void TDEngine::recompute_base_distance_cache() const {
