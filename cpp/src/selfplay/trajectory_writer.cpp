@@ -11,7 +11,9 @@ namespace tdmz {
 namespace {
 
 constexpr char kBinaryMagic[8] = {'T', 'D', 'M', 'Z', 'S', 'P', 'B', '1'};
+constexpr char kShardMagic[8] = {'T', 'D', 'M', 'Z', 'S', 'H', 'D', '1'};
 constexpr uint32_t kBinaryVersion = 1;
+constexpr uint32_t kShardVersion = 1;
 
 #pragma pack(push, 1)
 struct BinaryHistoryHeader {
@@ -38,10 +40,18 @@ struct BinaryStepHeader {
     int32_t wave;
     float time;
 };
+
+struct BinaryShardHeader {
+    char magic[8];
+    uint32_t version;
+    uint32_t history_count;
+    uint64_t offset_table_bytes;
+};
 #pragma pack(pop)
 
 static_assert(sizeof(BinaryHistoryHeader) == 48, "Unexpected binary history header size");
 static_assert(sizeof(BinaryStepHeader) == 36, "Unexpected binary step header size");
+static_assert(sizeof(BinaryShardHeader) == 24, "Unexpected binary shard header size");
 
 template <typename T>
 void write_vector(std::ostream& out, const std::vector<T>& values) {
@@ -114,6 +124,12 @@ uint32_t checked_u32(size_t value, const char* name) {
     return static_cast<uint32_t>(value);
 }
 
+uint64_t checked_u64_stream_pos(std::ostream& out) {
+    auto pos = out.tellp();
+    if (pos < 0) throw std::runtime_error("Failed to query binary output stream position");
+    return static_cast<uint64_t>(pos);
+}
+
 void validate_binary_step_sizes(const GameHistory& history, uint32_t obs_size, uint32_t policy_size, uint32_t legal_size) {
     for (const auto& step : history.steps) {
         if (step.observation.size() != obs_size ||
@@ -124,34 +140,7 @@ void validate_binary_step_sizes(const GameHistory& history, uint32_t obs_size, u
     }
 }
 
-} // namespace
-
-void write_history_jsonl(const GameHistory& history, const std::string& path) {
-    std::ofstream out(path);
-    if (!out) throw std::runtime_error("Failed to open trajectory JSONL path");
-    for (const auto& step : history.steps) {
-        write_step_json(out, history, step);
-        out << "\n";
-    }
-}
-
-void write_history_summary_json(const GameHistory& history, const std::string& path) {
-    std::ofstream out(path);
-    if (!out) throw std::runtime_error("Failed to open trajectory summary path");
-    out << std::setprecision(8);
-    out << "{";
-    out << "\"seed\":" << history.seed << ",";
-    out << "\"max_steps\":" << history.max_steps << ",";
-    out << "\"num_steps\":" << history.steps.size() << ",";
-    out << "\"terminal\":" << (history.terminal ? "true" : "false") << ",";
-    out << "\"total_reward\":" << history.total_reward;
-    out << "}\n";
-}
-
-void write_history_binary(const GameHistory& history, const std::string& path) {
-    std::ofstream out(path, std::ios::binary);
-    if (!out) throw std::runtime_error("Failed to open trajectory binary path");
-
+void write_history_binary_stream(std::ostream& out, const GameHistory& history) {
     uint32_t step_count = checked_u32(history.steps.size(), "step_count");
     uint32_t obs_size = 0;
     uint32_t policy_size = 0;
@@ -194,10 +183,7 @@ void write_history_binary(const GameHistory& history, const std::string& path) {
     }
 }
 
-GameHistory read_history_binary(const std::string& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) throw std::runtime_error("Failed to open trajectory binary path");
-
+GameHistory read_history_binary_stream(std::istream& in) {
     BinaryHistoryHeader header{};
     read_raw(in, header);
     if (std::memcmp(header.magic, kBinaryMagic, sizeof(kBinaryMagic)) != 0) {
@@ -234,6 +220,122 @@ GameHistory read_history_binary(const std::string& path) {
     }
 
     return history;
+}
+
+std::vector<uint64_t> read_shard_offsets(std::istream& in, BinaryShardHeader& header) {
+    read_raw(in, header);
+    if (std::memcmp(header.magic, kShardMagic, sizeof(kShardMagic)) != 0) {
+        throw std::runtime_error("Invalid trajectory shard magic");
+    }
+    if (header.version != kShardVersion) {
+        throw std::runtime_error("Unsupported trajectory shard version");
+    }
+    if (header.offset_table_bytes != static_cast<uint64_t>(header.history_count) * sizeof(uint64_t)) {
+        throw std::runtime_error("Invalid trajectory shard offset table size");
+    }
+
+    std::vector<uint64_t> offsets(header.history_count, 0);
+    for (auto& offset : offsets) {
+        read_raw(in, offset);
+    }
+    return offsets;
+}
+
+} // namespace
+
+void write_history_jsonl(const GameHistory& history, const std::string& path) {
+    std::ofstream out(path);
+    if (!out) throw std::runtime_error("Failed to open trajectory JSONL path");
+    for (const auto& step : history.steps) {
+        write_step_json(out, history, step);
+        out << "\n";
+    }
+}
+
+void write_history_summary_json(const GameHistory& history, const std::string& path) {
+    std::ofstream out(path);
+    if (!out) throw std::runtime_error("Failed to open trajectory summary path");
+    out << std::setprecision(8);
+    out << "{";
+    out << "\"seed\":" << history.seed << ",";
+    out << "\"max_steps\":" << history.max_steps << ",";
+    out << "\"num_steps\":" << history.steps.size() << ",";
+    out << "\"terminal\":" << (history.terminal ? "true" : "false") << ",";
+    out << "\"total_reward\":" << history.total_reward;
+    out << "}\n";
+}
+
+void write_history_binary(const GameHistory& history, const std::string& path) {
+    std::ofstream out(path, std::ios::binary);
+    if (!out) throw std::runtime_error("Failed to open trajectory binary path");
+    write_history_binary_stream(out, history);
+}
+
+GameHistory read_history_binary(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) throw std::runtime_error("Failed to open trajectory binary path");
+    return read_history_binary_stream(in);
+}
+
+void write_histories_binary_shard(const std::vector<GameHistory>& histories, const std::string& path) {
+    std::ofstream out(path, std::ios::binary);
+    if (!out) throw std::runtime_error("Failed to open trajectory binary shard path");
+
+    BinaryShardHeader header{};
+    std::memcpy(header.magic, kShardMagic, sizeof(kShardMagic));
+    header.version = kShardVersion;
+    header.history_count = checked_u32(histories.size(), "history_count");
+    header.offset_table_bytes = static_cast<uint64_t>(histories.size()) * sizeof(uint64_t);
+    write_raw(out, header);
+
+    std::vector<uint64_t> offsets(histories.size(), 0);
+    const std::streamoff offset_table_start = static_cast<std::streamoff>(sizeof(BinaryShardHeader));
+    for (uint64_t zero : offsets) {
+        write_raw(out, zero);
+    }
+
+    for (size_t i = 0; i < histories.size(); ++i) {
+        offsets[i] = checked_u64_stream_pos(out);
+        write_history_binary_stream(out, histories[i]);
+    }
+
+    out.seekp(offset_table_start, std::ios::beg);
+    if (!out) throw std::runtime_error("Failed to seek binary shard offset table");
+    for (uint64_t offset : offsets) {
+        write_raw(out, offset);
+    }
+}
+
+std::vector<GameHistory> read_histories_binary_shard(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) throw std::runtime_error("Failed to open trajectory binary shard path");
+
+    BinaryShardHeader header{};
+    std::vector<uint64_t> offsets = read_shard_offsets(in, header);
+    std::vector<GameHistory> histories;
+    histories.reserve(header.history_count);
+    for (uint32_t i = 0; i < header.history_count; ++i) {
+        in.clear();
+        in.seekg(static_cast<std::streamoff>(offsets[i]), std::ios::beg);
+        if (!in) throw std::runtime_error("Failed to seek trajectory shard history offset");
+        histories.push_back(read_history_binary_stream(in));
+    }
+    return histories;
+}
+
+GameHistory read_history_binary_shard_at(const std::string& path, size_t index) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) throw std::runtime_error("Failed to open trajectory binary shard path");
+
+    BinaryShardHeader header{};
+    std::vector<uint64_t> offsets = read_shard_offsets(in, header);
+    if (index >= offsets.size()) {
+        throw std::runtime_error("Trajectory shard index out of range");
+    }
+    in.clear();
+    in.seekg(static_cast<std::streamoff>(offsets[index]), std::ios::beg);
+    if (!in) throw std::runtime_error("Failed to seek trajectory shard history offset");
+    return read_history_binary_stream(in);
 }
 
 } // namespace tdmz
