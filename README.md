@@ -112,6 +112,22 @@ The current direction is to move the old Python prototype toward a fast C++ engi
     - `unclamped_path_basic_sniper_seed0`: defense `1440`, allowed `1440`, fast cap `504`, tank/boss locked.
     - `low_virtual_base_seed0`: defense `711`, allowed `711` with wave cap disabled, showing virtual-base leak cap affects the budget.
 
+- Phase 4.3D / 4.3D2: budgeted wave generator and elite budget absorption
+  - Added `BudgetedWaveConfig`, `BudgetedWaveResult`, and `generate_budgeted_wave()`.
+  - Converts `AttackBudgetResult` into deterministic `EnemySpec` waves without changing the engine's fixed `get_wave_enemies()` path.
+  - Uses regular / fast / tank / boss ratios, tank/boss unlocks, and archetype HP caps from AttackBudget.
+  - Adds slot-aware greedy generation: regular backbone first, then boss/tank, then regular budget, then fast fillers.
+  - Adds elite scaling to absorb remaining budget when `max_enemy_count` prevents adding more enemies.
+  - Elite scaling prioritizes Regular, then Tank, then Boss; Fast is not elite-scaled to avoid high-speed high-HP enemies.
+  - Added diagnostics: `elite_bonus_hp`, `elite_scaled_count`, and `max_enemy_hp`.
+  - Added `test_budgeted_wave_generator` and `export_budgeted_wave`.
+  - Validation PASS: normal CTest `9/9` passed.
+  - Latest `export_budgeted_wave` output:
+    - `budget_empty_seed0`: requested `515`, used `515`, enemies `21`, regular `10`, fast `11`, elite bonus `22.9`.
+    - `budget_path_basic_sniper_seed0`: requested `515`, used `515`, same wave-1 capped budget and wave composition as empty because the wave cap dominates.
+    - `synthetic_wave3_budget2500`: requested `2500`, used `2500`, enemies `45`, regular `19`, fast `25`, tank `1`, elite bonus `10.001`.
+    - `synthetic_wave5_budget30000`: requested `30000`, used `30000`, enemies `64`, regular `55`, tank `8`, boss `1`, elite bonus `16515`, elite-scaled enemies `38`, max enemy HP `1450`.
+
 ## Current gameplay rules
 
 - Board size: fixed 11x11.
@@ -185,6 +201,7 @@ Normal build should include:
 - `test_golden_trace`
 - `test_defense_capacity`
 - `test_attack_budget`
+- `test_budgeted_wave_generator`
 - `test_mcts`
 - `test_selfplay`
 
@@ -222,22 +239,22 @@ Benchmarks and exports:
 .\build\Release\export_golden_traces.exe golden_trace_current.jsonl
 .\build\Release\export_defense_capacity.exe
 .\build\Release\export_attack_budget.exe
+.\build\Release\export_budgeted_wave.exe
 
 .\build_torch\Release\bench_engine.exe
 .\build_torch\Release\bench_mcts.exe
 ```
 
-Latest local validation after AttackBudget 4.3C:
+Latest local validation after Budgeted Wave 4.3D2:
 
-- Normal CTest: `8/8` passed.
-- Torch CTest: `11/11` passed.
+- Normal CTest: `9/9` passed.
 - Golden trace combined hash: `0x595648689a6a7435`.
 - `bench_engine`: `354620` steps/s.
 - Torch `bench_engine`: `359361` steps/s.
 - `bench_mcts`: `62427.5` simulations/s.
 - Torch `bench_mcts`: `61515.4` simulations/s.
 - `generate_selfplay_dummy`: `steps=58`, `total_reward=-2150`.
-- `export_attack_budget`: wave-1 default budget is capped to `515` HP; unclamped Basic+Sniper budget is `1440`; low virtual-base unclamped budget is `711`.
+- `export_budgeted_wave`: wave-1 budget uses exactly `515` HP; wave-3 synthetic `2500` uses exactly `2500`; wave-5 synthetic `30000` uses exactly `30000` with 64 enemies and elite scaling.
 
 ## Current optimization state
 
@@ -255,6 +272,7 @@ Implemented:
 - Static DefenseCapacity estimator with current tower damage, spendable-money damage, virtual-base leak cap, raw HP cap, and allowed attack HP.
 - Path-aware greedy DefenseCapacity with path bitboard coverage, static/current differential diagnostics, and build/upgrade candidate gain-per-cost selection.
 - AttackBudget API with wave-stage cap, enemy archetype ratio caps, tank unlock, and boss unlock rules.
+- Budgeted wave generator with ratio allocation, unlock handling, deterministic slot-aware fill, and elite budget absorption.
 - Perf counters:
   - `pathfind_calls`
   - `placeable_recompute`
@@ -263,8 +281,8 @@ Implemented:
 
 Not yet implemented:
 
-- Attacker generation under AttackBudget.
 - Integration of budget-generated waves into engine wave spawning.
+- Runtime feature flag / config for fixed-wave versus budgeted-wave generation.
 - Multi-upgrade lookahead or sequential candidate refresh after a chosen upgrade.
 - Exact tower attack acceleration using range masks and enemy cell buckets.
 - Observation full static-channel cache.
@@ -278,16 +296,6 @@ If the user reports that tests passed without details, treat the phase as valida
 
 ## Next optimization plan
 
-### Phase 4.3D: attacker generation under budget
-
-Use the attack budget to generate a bounded enemy set:
-
-- Convert `allowed_attack_hp` into a wave budget.
-- Assign budget across regular / swarm / tank / boss archetypes.
-- Clamp special enemies by unlock wave and ratio limits.
-- Add deterministic tests for budget non-overflow and monotonic scaling with defense capacity.
-- Keep generated enemy specs separate from the current fixed `get_wave_enemies()` until the generator is validated.
-
 ### Phase 4.3E: engine integration switch for budget-generated waves
 
 After the standalone generator is validated:
@@ -295,6 +303,7 @@ After the standalone generator is validated:
 - Add a config or feature flag for budget-generated waves.
 - Keep current fixed PvE wave generation as the default baseline until A/B validation.
 - Add golden-trace-safe tests so existing fixed-wave behavior remains unchanged unless the feature flag is enabled.
+- Add export/smoke tests comparing fixed-wave and budgeted-wave generation without changing the default traces.
 
 ### Phase 4.2I: tower attack acceleration
 
