@@ -128,6 +128,16 @@ The current direction is to move the old Python prototype toward a fast C++ engi
     - `synthetic_wave3_budget2500`: requested `2500`, used `2500`, enemies `45`, regular `19`, fast `25`, tank `1`, elite bonus `10.001`.
     - `synthetic_wave5_budget30000`: requested `30000`, used `30000`, enemies `64`, regular `55`, tank `8`, boss `1`, elite bonus `16515`, elite-scaled enemies `38`, max enemy HP `1450`.
 
+- Phase 4.3E: engine wave generation mode switch
+  - Integrated budgeted wave generation into `TDEngine` behind a runtime feature flag.
+  - Default constructor still uses fixed waves, preserving existing engine behavior and golden trace hashes.
+  - Added `TDEngine(int width, int height, uint64_t seed, bool use_budgeted_waves)`.
+  - Added `use_budgeted_waves()`, `set_use_budgeted_waves(enabled, regenerate_pending_wave)`, and `pending_spawn_total_hp()`.
+  - Split wave generation into `get_fixed_wave_enemies()`, `get_budgeted_wave_enemies()`, and `get_wave_enemies()`.
+  - Added `test_engine_wave_modes` and `export_engine_wave_modes`.
+  - Validation PASS: fixed mode keeps wave-1 count `9` and total HP `281.2`; budgeted mode produces count `21` and total HP `515`; runtime toggling regenerates the pending queue correctly.
+  - Golden trace semantic lock remains unchanged: combined hash `0x595648689a6a7435`.
+
 ## Current gameplay rules
 
 - Board size: fixed 11x11.
@@ -139,6 +149,7 @@ The current direction is to move the old Python prototype toward a fast C++ engi
 - Each action advances game time by 1 second.
 - Invalid build / upgrade / sell actions receive a -5 reward penalty and still advance time.
 - Wait is always legal.
+- Default wave generation mode is still fixed PvE waves; budgeted wave generation is available behind an explicit engine flag.
 
 ### Action space
 
@@ -181,15 +192,32 @@ Each simulation second runs in this order:
 7. If the current wave is fully cleared, advance to the next wave and set a 3-second spawn delay.
 8. Advance `time` by `dt`.
 
-### Current wave generation
+### Current fixed wave generation
 
-Current fixed PvE wave generation:
+Fixed PvE wave generation remains the default:
 
 - `base_hp = 20 + wave * 15 + wave^2 * 2`
 - Swarm: `wave * 2`, HP `base_hp * 0.3`, speed `2.8`, reward `5`
 - Regular: `5 + wave * 2`, HP `base_hp`, speed `1.5`, reward `10`
 - Tank: from wave 3, count `wave`, HP `base_hp * 3.5`, speed `0.8`, reward `30`
 - Boss: from odd waves >= 5, count `1 + wave / 10`, HP `base_hp * 10`, speed `0.6`, reward `100`
+
+### Budgeted wave mode
+
+Budgeted wave mode is available only when explicitly enabled:
+
+```cpp
+TDEngine env(11, 11, 0, true);
+// or
+env.set_use_budgeted_waves(true, true);
+```
+
+Budgeted mode uses:
+
+- path-aware DefenseCapacity
+- AttackBudget wave-stage cap and archetype caps
+- deterministic BudgetedWaveGenerator
+- elite scaling for unused budget when enemy-count slots are saturated
 
 ## Current test targets
 
@@ -202,6 +230,7 @@ Normal build should include:
 - `test_defense_capacity`
 - `test_attack_budget`
 - `test_budgeted_wave_generator`
+- `test_engine_wave_modes`
 - `test_mcts`
 - `test_selfplay`
 
@@ -240,21 +269,27 @@ Benchmarks and exports:
 .\build\Release\export_defense_capacity.exe
 .\build\Release\export_attack_budget.exe
 .\build\Release\export_budgeted_wave.exe
+.\build\Release\export_engine_wave_modes.exe
 
 .\build_torch\Release\bench_engine.exe
 .\build_torch\Release\bench_mcts.exe
 ```
 
-Latest local validation after Budgeted Wave 4.3D2:
+Latest local validation after Engine Wave Mode 4.3E:
 
-- Normal CTest: `9/9` passed.
+- Normal test targets: `10`.
 - Golden trace combined hash: `0x595648689a6a7435`.
-- `bench_engine`: `354620` steps/s.
-- Torch `bench_engine`: `359361` steps/s.
-- `bench_mcts`: `62427.5` simulations/s.
-- Torch `bench_mcts`: `61515.4` simulations/s.
-- `generate_selfplay_dummy`: `steps=58`, `total_reward=-2150`.
-- `export_budgeted_wave`: wave-1 budget uses exactly `515` HP; wave-3 synthetic `2500` uses exactly `2500`; wave-5 synthetic `30000` uses exactly `30000` with 64 enemies and elite scaling.
+- `export_engine_wave_modes`:
+  - `fixed_wave_seed0`: fixed mode, wave `1`, pending count `9`, total HP `281.2`, attack budget `515`.
+  - `budgeted_wave_seed0`: budgeted mode, wave `1`, pending count `21`, total HP `515`, attack budget `515`.
+  - `toggled_budgeted_wave_seed0`: runtime toggle ON regenerates count `21`, total HP `515`.
+  - `toggled_fixed_wave_seed0`: runtime toggle OFF regenerates count `9`, total HP `281.2`.
+- Previous benchmarks:
+  - `bench_engine`: `354620` steps/s.
+  - Torch `bench_engine`: `359361` steps/s.
+  - `bench_mcts`: `62427.5` simulations/s.
+  - Torch `bench_mcts`: `61515.4` simulations/s.
+  - `generate_selfplay_dummy`: `steps=58`, `total_reward=-2150`.
 
 ## Current optimization state
 
@@ -273,6 +308,7 @@ Implemented:
 - Path-aware greedy DefenseCapacity with path bitboard coverage, static/current differential diagnostics, and build/upgrade candidate gain-per-cost selection.
 - AttackBudget API with wave-stage cap, enemy archetype ratio caps, tank unlock, and boss unlock rules.
 - Budgeted wave generator with ratio allocation, unlock handling, deterministic slot-aware fill, and elite budget absorption.
+- Runtime engine wave-generation switch between fixed waves and budgeted waves.
 - Perf counters:
   - `pathfind_calls`
   - `placeable_recompute`
@@ -281,8 +317,8 @@ Implemented:
 
 Not yet implemented:
 
-- Integration of budget-generated waves into engine wave spawning.
-- Runtime feature flag / config for fixed-wave versus budgeted-wave generation.
+- A/B self-play comparison between fixed-wave and budgeted-wave modes.
+- Config serialization for wave-generation mode.
 - Multi-upgrade lookahead or sequential candidate refresh after a chosen upgrade.
 - Exact tower attack acceleration using range masks and enemy cell buckets.
 - Observation full static-channel cache.
@@ -296,14 +332,14 @@ If the user reports that tests passed without details, treat the phase as valida
 
 ## Next optimization plan
 
-### Phase 4.3E: engine integration switch for budget-generated waves
+### Phase 4.3F: fixed-wave versus budgeted-wave self-play A/B smoke
 
-After the standalone generator is validated:
+Now that the engine switch is available:
 
-- Add a config or feature flag for budget-generated waves.
-- Keep current fixed PvE wave generation as the default baseline until A/B validation.
-- Add golden-trace-safe tests so existing fixed-wave behavior remains unchanged unless the feature flag is enabled.
-- Add export/smoke tests comparing fixed-wave and budgeted-wave generation without changing the default traces.
+- Add an app that runs short fixed-wave and budgeted-wave dummy/self-play episodes with identical seeds.
+- Record episode length, total reward, final wave, base HP, deaths/leaks, and pending/enemy counts.
+- Keep this as a smoke/diagnostic tool first, not a training default.
+- Use the result to decide whether budgeted waves should remain a research option or become a future default.
 
 ### Phase 4.2I: tower attack acceleration
 
