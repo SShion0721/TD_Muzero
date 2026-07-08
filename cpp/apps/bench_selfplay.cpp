@@ -2,11 +2,13 @@
 #include "tdmz/mcts/dummy_network.hpp"
 #include "tdmz/selfplay/selfplay_runner.hpp"
 #include "tdmz/selfplay/trajectory_writer.hpp"
+#include <algorithm>
 #include <chrono>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace tdmz;
@@ -27,6 +29,7 @@ struct BenchResult {
     int simulations = 0;
     int observation_calls = 0;
     int trajectory_records = 0;
+    int workers = 1;
     double seconds = 0.0;
     double checksum = 0.0;
     uint64_t bytes_written = 0;
@@ -55,7 +58,17 @@ double checksum_history(const GameHistory& history) {
     return sum;
 }
 
-BenchResult run_case(const std::string& name, bool budgeted, WriteMode write_mode, int games, int max_steps, int simulations) {
+void accumulate(BenchResult& dst, const BenchResult& src) {
+    dst.games += src.games;
+    dst.steps += src.steps;
+    dst.simulations += src.simulations;
+    dst.observation_calls += src.observation_calls;
+    dst.trajectory_records += src.trajectory_records;
+    dst.checksum += src.checksum;
+    dst.bytes_written += src.bytes_written;
+}
+
+BenchResult run_case(const std::string& name, bool budgeted, WriteMode write_mode, int games, int max_steps, int simulations, uint64_t seed_base = 1000) {
     DummyNetwork net;
     SelfPlayConfig cfg;
     cfg.max_steps = max_steps;
@@ -68,6 +81,7 @@ BenchResult run_case(const std::string& name, bool budgeted, WriteMode write_mod
     BenchResult result;
     result.name = name;
     result.games = games;
+    result.workers = 1;
 
     std::vector<GameHistory> shard_histories;
     if (write_mode == WriteMode::ShardBinary) {
@@ -76,7 +90,7 @@ BenchResult run_case(const std::string& name, bool budgeted, WriteMode write_mod
 
     auto start = std::chrono::high_resolution_clock::now();
     for (int g = 0; g < games; ++g) {
-        cfg.seed = static_cast<uint64_t>(1000 + g);
+        cfg.seed = seed_base + static_cast<uint64_t>(g);
         SelfPlayRunner runner(cfg);
         TDEngine env(11, 11, cfg.seed, budgeted);
         GameHistory history = runner.run(env, net);
@@ -113,6 +127,44 @@ BenchResult run_case(const std::string& name, bool budgeted, WriteMode write_mod
     return result;
 }
 
+BenchResult run_parallel_case(const std::string& name, bool budgeted, WriteMode write_mode, int workers, int games_per_worker, int max_steps, int simulations) {
+    BenchResult result;
+    result.name = name;
+    result.workers = workers;
+
+    std::vector<BenchResult> partials(workers);
+    std::vector<std::thread> threads;
+    threads.reserve(workers);
+
+    auto start = std::chrono::high_resolution_clock::now();
+    for (int w = 0; w < workers; ++w) {
+        threads.emplace_back([&, w]() {
+            // Stockfish-style actor isolation: each worker owns its engine, evaluator,
+            // MCTS objects, RNG seeds, and output shard. No shared hot-path locks.
+            std::string worker_name = name + "_w" + std::to_string(w);
+            partials[w] = run_case(
+                worker_name,
+                budgeted,
+                write_mode,
+                games_per_worker,
+                max_steps,
+                simulations,
+                100000 + static_cast<uint64_t>(w) * 10000);
+        });
+    }
+    for (auto& t : threads) {
+        t.join();
+    }
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> diff = end - start;
+
+    for (const auto& p : partials) {
+        accumulate(result, p);
+    }
+    result.seconds = diff.count();
+    return result;
+}
+
 void print_result(const BenchResult& r) {
     double games_per_sec = r.games / r.seconds;
     double steps_per_sec = r.steps / r.seconds;
@@ -124,6 +176,7 @@ void print_result(const BenchResult& r) {
 
     std::cout << std::fixed << std::setprecision(6)
               << "{\"case\":\"" << r.name << "\""
+              << ",\"workers\":" << r.workers
               << ",\"games\":" << r.games
               << ",\"steps\":" << r.steps
               << ",\"simulations\":" << r.simulations
@@ -152,6 +205,8 @@ int main() {
     const int games = 8;
     const int max_steps = 64;
     const int simulations = 32;
+    const int workers = std::max(2, std::min(4, static_cast<int>(std::thread::hardware_concurrency() ? std::thread::hardware_concurrency() : 4)));
+    const int games_per_worker = 4;
 
     print_result(run_case("fixed_no_write", false, WriteMode::None, games, max_steps, simulations));
     print_result(run_case("budgeted_no_write", true, WriteMode::None, games, max_steps, simulations));
@@ -160,6 +215,11 @@ int main() {
     print_result(run_case("fixed_binary_shard_write", false, WriteMode::ShardBinary, games, max_steps, simulations));
     print_result(run_case("budgeted_binary_shard_write", true, WriteMode::ShardBinary, games, max_steps, simulations));
     print_result(run_case("fixed_jsonl_write", false, WriteMode::Jsonl, 2, max_steps, simulations));
+
+    print_result(run_parallel_case("fixed_parallel_no_write", false, WriteMode::None, workers, games_per_worker, max_steps, simulations));
+    print_result(run_parallel_case("budgeted_parallel_no_write", true, WriteMode::None, workers, games_per_worker, max_steps, simulations));
+    print_result(run_parallel_case("fixed_parallel_shard_write", false, WriteMode::ShardBinary, workers, games_per_worker, max_steps, simulations));
+    print_result(run_parallel_case("budgeted_parallel_shard_write", true, WriteMode::ShardBinary, workers, games_per_worker, max_steps, simulations));
 
     return 0;
 }
