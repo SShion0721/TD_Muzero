@@ -34,6 +34,10 @@ add_executable(test_observation_cache test_observation_cache.cpp)
 target_link_libraries(test_observation_cache tdmz_core)
 add_test(NAME test_observation_cache COMMAND test_observation_cache)
 
+add_executable(test_binary_trajectory test_binary_trajectory.cpp)
+target_link_libraries(test_binary_trajectory tdmz_core)
+add_test(NAME test_binary_trajectory COMMAND test_binary_trajectory)
+
 add_executable(test_mcts test_mcts.cpp)
 target_link_libraries(test_mcts tdmz_core)
 add_test(NAME test_mcts COMMAND test_mcts)
