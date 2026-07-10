@@ -1,12 +1,29 @@
 #include "tdmz/mcts/mcts.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <numeric>
 #include <stdexcept>
 #include <vector>
 
 namespace tdmz {
+
+namespace {
+
+uint64_t required_nodes_for_search(
+    int num_simulations,
+    int latent_top_k,
+    size_t root_action_count
+) {
+    const uint64_t latent_width = static_cast<uint64_t>(
+        std::min(latent_top_k, kActionSpaceSize));
+    return 1ULL
+        + static_cast<uint64_t>(root_action_count)
+        + static_cast<uint64_t>(num_simulations) * latent_width;
+}
+
+} // namespace
 
 MCTS::MCTS(MCTSConfig cfg) : cfg_(cfg), rng_(cfg.random_seed) {
     if (cfg_.num_simulations <= 0) {
@@ -62,6 +79,13 @@ RootSearchOutput MCTS::search_single(
             throw std::invalid_argument("MCTS legal root actions contain duplicates");
         }
         seen[action] = 1;
+    }
+
+    const uint64_t required_nodes = required_nodes_for_search(
+        cfg_.num_simulations, cfg_.latent_top_k, legal_actions.size());
+    if (required_nodes > static_cast<uint64_t>(cfg_.max_nodes)) {
+        throw std::invalid_argument(
+            "MCTS max_nodes is too small for the configured simulations and branching");
     }
 
     NodePool pool(cfg_.max_nodes);
@@ -164,6 +188,10 @@ int MCTS::expand_node(
     const std::vector<int>& candidate_actions,
     const std::vector<float>& policy_logits
 ) {
+    if (candidate_actions.size() > static_cast<size_t>(pool.remaining())) {
+        throw std::runtime_error("NodePool capacity is insufficient for atomic node expansion");
+    }
+
     Node& node = pool.get(node_id);
     node.parent = parent;
     node.action_from_parent = action_from_parent;
