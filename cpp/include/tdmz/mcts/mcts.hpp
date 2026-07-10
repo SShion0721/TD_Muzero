@@ -4,6 +4,7 @@
 #include <utility>
 #include <vector>
 #include "tdmz/core/action.hpp"
+#include "tdmz/mcts/edge_pool.hpp"
 #include "tdmz/mcts/mcts_config.hpp"
 #include "tdmz/mcts/node_pool.hpp"
 #include "tdmz/mcts/minmax.hpp"
@@ -26,6 +27,7 @@ private:
     MCTSConfig cfg_;
     std::mt19937_64 rng_;
     NodePool node_pool_;
+    EdgePool edge_pool_;
 
     std::vector<uint8_t> seen_actions_scratch_;
     std::vector<std::vector<float>> initial_observations_scratch_;
@@ -37,7 +39,6 @@ private:
     std::vector<double> root_noise_scratch_;
 
     int scratch_capacity_growth_events_ = 0;
-    int node_buffer_growth_events_ = 0;
     int max_search_depth_ = 0;
 
     int expand_node(
@@ -59,7 +60,7 @@ private:
         const char* stage
     ) const;
 
-    int select_child(
+    int select_child_edge(
         const NodePool& pool,
         int node_id,
         const MinMaxStats& minmax
