@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <regex>
 #include <stdexcept>
 #include <utility>
@@ -10,6 +11,12 @@
 namespace tdmz {
 
 namespace {
+
+struct PendingReplaySample {
+    size_t global_game_index = 0;
+    size_t output_index = 0;
+    uint64_t random_value = 0;
+};
 
 std::string read_text_file(const std::string& path) {
     std::ifstream in(path);
@@ -59,6 +66,13 @@ std::vector<std::string> parse_shard_paths_from_index_json(const std::string& in
     return paths;
 }
 
+int checked_tensor_size(size_t size, const char* name) {
+    if (size > static_cast<size_t>(std::numeric_limits<int>::max())) {
+        throw std::runtime_error(std::string("Replay ") + name + " exceeds int range");
+    }
+    return static_cast<int>(size);
+}
+
 void ensure_step_tensor_sizes(
     const TrajectoryStep& step,
     bool& initialized,
@@ -66,16 +80,20 @@ void ensure_step_tensor_sizes(
     int& policy_size,
     int& mask_size
 ) {
+    const int current_obs_size = checked_tensor_size(step.observation.size(), "observation size");
+    const int current_policy_size = checked_tensor_size(step.policy_target.size(), "policy size");
+    const int current_mask_size = checked_tensor_size(step.legal_mask.size(), "legal-mask size");
+
     if (!initialized) {
-        obs_size = static_cast<int>(step.observation.size());
-        policy_size = static_cast<int>(step.policy_target.size());
-        mask_size = static_cast<int>(step.legal_mask.size());
+        obs_size = current_obs_size;
+        policy_size = current_policy_size;
+        mask_size = current_mask_size;
         initialized = true;
     }
 
-    if (static_cast<int>(step.observation.size()) != obs_size ||
-        static_cast<int>(step.policy_target.size()) != policy_size ||
-        static_cast<int>(step.legal_mask.size()) != mask_size) {
+    if (current_obs_size != obs_size ||
+        current_policy_size != policy_size ||
+        current_mask_size != mask_size) {
         throw std::runtime_error("Replay batch contains inconsistent tensor sizes");
     }
 }
@@ -122,6 +140,7 @@ GameHistory ReplayDataset::read_game(size_t global_game_index) {
     size_t shard_id = static_cast<size_t>(it - cumulative_games_.begin());
     size_t shard_base = shard_id == 0 ? 0 : cumulative_games_[shard_id - 1];
     size_t local_index = global_game_index - shard_base;
+    ++game_read_count_;
     return readers_[shard_id]->read_at(local_index);
 }
 
@@ -131,7 +150,7 @@ ReplaySampleRef ReplayDataset::sample_ref(uint64_t random_u64) {
     size_t shard_id = static_cast<size_t>(it - cumulative_games_.begin());
     size_t shard_base = shard_id == 0 ? 0 : cumulative_games_[shard_id - 1];
     size_t local_index = global_game_index - shard_base;
-    GameHistory history = readers_[shard_id]->read_at(local_index);
+    GameHistory history = read_game(global_game_index);
     if (history.steps.empty()) throw std::runtime_error("ReplayDataset sampled empty GameHistory");
     size_t step_index = static_cast<size_t>((random_u64 >> 32) % history.steps.size());
 
@@ -165,38 +184,81 @@ uint64_t ReplayBatchSampler::next_u64() {
 ReplayBatch ReplayBatchSampler::sample_batch(int batch_size) {
     if (batch_size <= 0) throw std::runtime_error("Replay batch size must be positive");
 
+    std::vector<PendingReplaySample> pending;
+    pending.reserve(batch_size);
+    for (int i = 0; i < batch_size; ++i) {
+        const uint64_t random_value = next_u64();
+        pending.push_back({
+            static_cast<size_t>(random_value % dataset_.game_count()),
+            static_cast<size_t>(i),
+            random_value
+        });
+    }
+    std::sort(
+        pending.begin(), pending.end(),
+        [](const PendingReplaySample& a, const PendingReplaySample& b) {
+            if (a.global_game_index != b.global_game_index) {
+                return a.global_game_index < b.global_game_index;
+            }
+            return a.output_index < b.output_index;
+        });
+
     ReplayBatch batch;
     batch.batch_size = batch_size;
-    batch.values.reserve(batch_size);
-    batch.rewards.reserve(batch_size);
-    batch.actions.reserve(batch_size);
-    batch.dones.reserve(batch_size);
+    batch.values.resize(batch_size);
+    batch.rewards.resize(batch_size);
+    batch.actions.resize(batch_size);
+    batch.dones.resize(batch_size);
 
     bool tensor_sizes_initialized = false;
     int obs_size = 0;
     int policy_size = 0;
     int mask_size = 0;
 
-    for (int i = 0; i < batch_size; ++i) {
-        TrajectoryStep step = dataset_.sample_step(next_u64());
-        ensure_step_tensor_sizes(step, tensor_sizes_initialized, obs_size, policy_size, mask_size);
-
-        if (i == 0) {
-            batch.observation_size = obs_size;
-            batch.policy_size = policy_size;
-            batch.legal_mask_size = mask_size;
-            batch.observations.reserve(static_cast<size_t>(batch_size) * obs_size);
-            batch.policy_targets.reserve(static_cast<size_t>(batch_size) * policy_size);
-            batch.legal_masks.reserve(static_cast<size_t>(batch_size) * mask_size);
+    size_t begin = 0;
+    while (begin < pending.size()) {
+        size_t end = begin + 1;
+        while (end < pending.size() &&
+               pending[end].global_game_index == pending[begin].global_game_index) {
+            ++end;
         }
 
-        batch.observations.insert(batch.observations.end(), step.observation.begin(), step.observation.end());
-        batch.policy_targets.insert(batch.policy_targets.end(), step.policy_target.begin(), step.policy_target.end());
-        batch.legal_masks.insert(batch.legal_masks.end(), step.legal_mask.begin(), step.legal_mask.end());
-        batch.values.push_back(step.root_value);
-        batch.rewards.push_back(step.reward);
-        batch.actions.push_back(step.action);
-        batch.dones.push_back(step.done ? 1u : 0u);
+        GameHistory history = dataset_.read_game(pending[begin].global_game_index);
+        if (history.steps.empty()) throw std::runtime_error("ReplayDataset sampled empty GameHistory");
+
+        for (size_t i = begin; i < end; ++i) {
+            const size_t step_index = static_cast<size_t>(
+                (pending[i].random_value >> 32) % history.steps.size());
+            const TrajectoryStep& step = history.steps[step_index];
+            ensure_step_tensor_sizes(
+                step, tensor_sizes_initialized, obs_size, policy_size, mask_size);
+
+            if (batch.observations.empty() && tensor_sizes_initialized) {
+                batch.observation_size = obs_size;
+                batch.policy_size = policy_size;
+                batch.legal_mask_size = mask_size;
+                batch.observations.resize(static_cast<size_t>(batch_size) * obs_size);
+                batch.policy_targets.resize(static_cast<size_t>(batch_size) * policy_size);
+                batch.legal_masks.resize(static_cast<size_t>(batch_size) * mask_size);
+            }
+
+            const size_t output_index = pending[i].output_index;
+            std::copy(
+                step.observation.begin(), step.observation.end(),
+                batch.observations.begin() + output_index * static_cast<size_t>(obs_size));
+            std::copy(
+                step.policy_target.begin(), step.policy_target.end(),
+                batch.policy_targets.begin() + output_index * static_cast<size_t>(policy_size));
+            std::copy(
+                step.legal_mask.begin(), step.legal_mask.end(),
+                batch.legal_masks.begin() + output_index * static_cast<size_t>(mask_size));
+            batch.values[output_index] = step.root_value;
+            batch.rewards[output_index] = step.reward;
+            batch.actions[output_index] = step.action;
+            batch.dones[output_index] = step.done ? 1u : 0u;
+        }
+
+        begin = end;
     }
 
     return batch;
