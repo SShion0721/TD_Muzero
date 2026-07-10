@@ -109,12 +109,34 @@ Validation:
 - Existing root-noise, node-capacity, backup-sign, legality, and evaluator-validation tests remain unchanged and pass.
 - Full Torch-disabled CTest passes on GitHub-hosted Ubuntu and Windows runners.
 
-### B2.3. Batched leaf inference — pending
+### B2.3. Batched leaf inference — completed
 
-- Select multiple leaves without corrupting virtual tree state.
-- Submit one recurrent inference batch for the selected leaves.
-- Expand and back up each result deterministically.
-- Measure evaluator calls, batch occupancy, simulations per second, and search-strength parity.
+- Add `recurrent_batch_size`, defaulting to 1 so existing sequential simulation scheduling remains unchanged.
+- Collect multiple unique unexpanded leaves before a recurrent evaluator call when batching is explicitly enabled.
+- Apply temporary zero-value virtual visits only while selecting leaves for one batch.
+- Fully undo all virtual visits before evaluator execution, expansion, backup, or error propagation.
+- Stop collection when a narrow tree would select a leaf already reserved in the current batch instead of evaluating the same target twice.
+- Submit one recurrent `EvalInput` containing unique target node IDs.
+- Expand and back up evaluator rows in deterministic leaf-collection order.
+- Reuse per-slot path buffers, recurrent vectors, and node reservation marks.
+- Expose recurrent evaluator calls/samples, maximum batch occupancy, and collision-stop counts.
+- Add `--recurrent-batch-size` to both the MCTS benchmark and production self-play shard generator.
+- Record the selected recurrent batch size in generated replay indexes.
+
+Validation:
+
+- Default batch size 1 and explicit batch size 1 produce field-for-field identical search outputs.
+- Wide-tree tests prove recurrent evaluator calls decrease and target node IDs remain unique.
+- Single-chain tests prove safe automatic fallback to batch size 1 without duplicate targets.
+- Repeated batched searches are deterministic under the same evaluator and configuration.
+- Root visit totals and recurrent evaluator sample totals equal the configured simulation count.
+- Full Torch-disabled CTest passes on GitHub-hosted Ubuntu and Windows runners.
+
+Compatibility and performance boundary:
+
+- `recurrent_batch_size=1` is the compatibility default and preserves the former search schedule.
+- Values greater than 1 intentionally change within-batch selection scheduling; search-strength parity requires controlled matches.
+- DummyNetwork/CPU results only validate batching mechanics and evaluator-call reduction. LibTorch CPU/GPU throughput must be measured separately before changing production defaults.
 
 ## Phase C — replay and binary data path
 
@@ -225,7 +247,7 @@ Each completed phase must provide:
 
 ## Current execution order
 
-1. Implement B2.3 batched leaf recurrent inference.
-2. Implement D spatial action, policy, and legality architecture.
-3. Complete E1b trainer persistence, toolchain locking, and optional LibTorch CI.
-4. Run final locked release validation and benchmark reporting.
+1. Audit and implement Phase D spatial action, policy, and legality architecture.
+2. Add LibTorch-enabled batch-inference CI and local CPU/GPU benchmark coverage.
+3. Complete E1b trainer persistence and release toolchain locking.
+4. Run final locked release validation, replay benchmark, MCTS benchmark, and search-strength reporting.
