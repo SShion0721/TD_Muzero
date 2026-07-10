@@ -37,7 +37,7 @@ Compatibility: trajectories generated under the old waypoint-capped movement rul
 
 ### A3. General timestep contract — completed
 
-- The engine now uses discrete one-second ticks.
+- The engine uses discrete one-second ticks.
 - `step_time(dt)` accepts only finite, non-negative integer seconds.
 - A multi-second call executes repeated one-second ticks and stops early on terminal state.
 - `step_time(0)` is a no-op that preserves the current terminal flag.
@@ -103,7 +103,7 @@ Validated local result: a 2048-sample batch over a four-game test dataset perfor
 - Bounds, offset, tensor-size, overflow, finite-value, flag, truncation, and trailing-byte validation.
 - Corruption, concurrency, and failure-cleanup regressions.
 
-Compatibility: version-1 layout is unchanged, but malformed files previously accepted may now be rejected.
+Compatibility: version-1 binary shard layout is unchanged, but malformed files previously accepted may now be rejected.
 
 ### C2. Transition-level replay format — pending
 
@@ -112,7 +112,7 @@ Compatibility: version-1 layout is unchanged, but malformed files previously acc
 - Implement `read_step_into_batch()` with preallocated memory.
 - Group reads by shard and physical offset.
 - Report physical bytes read, packed bytes, and read amplification separately.
-- Keep replay v1 readable while writing a versioned replay v2 format.
+- Keep replay binary v1 readable while writing a versioned transition-indexed format.
 
 ## Phase D — C++ network architecture — pending
 
@@ -122,7 +122,7 @@ Compatibility: version-1 layout is unchanged, but malformed files previously acc
 - Add coordinate sensitivity, translation, local latent response, action mapping, and legality integration tests.
 - Introduce a new network architecture identifier and checkpoint boundary.
 
-## Phase E — persistence, reproducibility, and build hygiene
+## Phase E — persistence, reproducibility, and observability
 
 ### E0. Core build reproducibility — completed
 
@@ -130,12 +130,35 @@ Compatibility: version-1 layout is unchanged, but malformed files previously acc
 - Target-scoped includes, compile options, and Torch flags.
 - Ninja C++17 core CI on Ubuntu and Windows with full Torch-disabled CTest.
 
-### E1. Persistence and release validation — pending
+### E0.5. Interactive engine observability — completed
 
-- Store network, environment, observation, action-space, reward-transform, and rule versions with checkpoints.
-- Version replay format and environment rules.
-- Reject incompatible replay/checkpoint/runtime combinations instead of silently mixing them.
-- Lock a current toolchain.
+- Add an optional zero-dependency Win32/GDI GUI that drives the canonical `TDEngine` directly.
+- Visualize the board, placeability, towers, enemies, HP, slow state, economy, wave, timers, legality, rewards, and recent actions.
+- Support inspect, build, upgrade, sell, one/multi-tick stepping, auto-run, reset, seeds, and fixed/budgeted waves.
+- Keep Linux builds unchanged and compile/link the GUI in Windows CI.
+
+### E1a. Compatibility metadata and manifests — completed
+
+- Define canonical replay, environment-rule, observation, action-space, reward-transform, and network-architecture versions.
+- Write replay index version 2 with complete compatibility metadata while keeping the binary shard layout at version 1.
+- Make replay loaders and benchmarks reject legacy or incompatible indexes by default.
+- Permit v1 or unversioned indexes only through an explicit reviewed legacy opt-in.
+- Report field-specific actual/expected values for compatibility failures.
+- Add a checkpoint manifest format that records compatibility metadata, network dimensions, training step, seed, and optimizer-state presence.
+- Validate checkpoint manifests for inference or full training-resume requirements.
+
+Compatibility:
+
+- Existing `.tdmzshd` binary files remain readable.
+- Existing version-1 or unversioned index JSON files require explicit `AllowV1` / `--allow-legacy-index` use because they cannot prove their rule and tensor contracts.
+- New self-play generation writes index version 2.
+- The canonical C++ path still has no complete model/optimizer serialization implementation; the manifest establishes the required contract without claiming that persistence already exists.
+
+### E1b. Trainer persistence and release toolchain — pending
+
+- Integrate the manifest with the future canonical C++ model and optimizer save/load implementation.
+- Save and restore RNG/training state required for reproducible continuation.
+- Lock a supported compiler, CMake, LibTorch, CUDA, and cuDNN matrix.
 - Add optional reproducible LibTorch CI.
 - Record benchmark deltas with fixed workloads.
 
@@ -153,13 +176,14 @@ Each completed phase must provide:
 
 - `dd9cecced9bd0b6a5acfa46c06b9b2eef9b21a32` is the compact baseline containing all work completed before A3.
 - Each subsequent independently validated phase adds one squash-equivalent commit to `master`.
-- Temporary feature-branch commits and maintenance workflows are not retained in `master` history.
+- Temporary feature-branch commits are not retained in `master` history.
 - The planned final history remains well below 30 commits.
 
 ## Current execution order
 
-1. E1 compatibility and version metadata.
-2. C2 transition-indexed replay v2.
-3. B2 MCTS scratch reuse, contiguous edges, and batched leaf inference.
-4. D spatial action, policy, and legality architecture.
-5. Final locked release validation and benchmark report.
+1. Validate and merge E1a compatibility metadata and manifests.
+2. Implement C2 transition-indexed replay.
+3. Implement B2 MCTS scratch reuse, contiguous edges, and batched leaf inference.
+4. Implement D spatial action, policy, and legality architecture.
+5. Complete E1b trainer persistence, toolchain locking, and optional LibTorch CI.
+6. Run final locked release validation and benchmark reporting.
