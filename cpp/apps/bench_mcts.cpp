@@ -62,13 +62,13 @@ int main(int argc, char** argv) {
 
         tdmz::DummyNetwork network;
         tdmz::MCTS mcts(config);
-
         const tdmz::RootSearchOutput warmup = mcts.search_single(
             network, observation, legal_actions);
 
         uint64_t created_nodes = 0;
         uint64_t reused_nodes = 0;
-        uint64_t node_buffer_growths = 0;
+        uint64_t created_edges = 0;
+        uint64_t reused_edges = 0;
         uint64_t scratch_growths = 0;
         int max_depth = 0;
         double checksum = 0.0;
@@ -79,12 +79,14 @@ int main(int argc, char** argv) {
                 network, observation, legal_actions);
             created_nodes += static_cast<uint64_t>(output.debug.node_objects_created);
             reused_nodes += static_cast<uint64_t>(output.debug.node_objects_reused);
-            node_buffer_growths += static_cast<uint64_t>(output.debug.node_buffer_growth_events);
+            created_edges += static_cast<uint64_t>(output.debug.edge_objects_created);
+            reused_edges += static_cast<uint64_t>(output.debug.edge_objects_reused);
             scratch_growths += static_cast<uint64_t>(output.debug.scratch_capacity_growth_events);
             max_depth = std::max(max_depth, output.debug.max_search_depth);
             checksum += output.action * 0.125;
             checksum += output.root_value * 3.0;
             checksum += output.debug.total_nodes * 0.001;
+            checksum += output.debug.total_edges * 0.0001;
         }
         const double seconds = std::chrono::duration<double>(
             std::chrono::high_resolution_clock::now() - start).count();
@@ -92,19 +94,21 @@ int main(int argc, char** argv) {
             * static_cast<uint64_t>(simulations);
 
         std::cout << std::fixed << std::setprecision(6)
-                  << "{\"case\":\"mcts_repeated_search\""
+                  << "{\"case\":\"mcts_contiguous_edges\""
                   << ",\"searches\":" << searches
                   << ",\"simulations_per_search\":" << simulations
                   << ",\"latent_top_k\":" << latent_top_k
                   << ",\"root_actions\":" << legal_actions.size()
+                  << ",\"warmup_nodes\":" << warmup.debug.total_nodes
+                  << ",\"warmup_edges\":" << warmup.debug.total_edges
                   << ",\"warmup_nodes_created\":" << warmup.debug.node_objects_created
-                  << ",\"warmup_node_buffer_growths\":"
-                  << warmup.debug.node_buffer_growth_events
+                  << ",\"warmup_edges_created\":" << warmup.debug.edge_objects_created
                   << ",\"warmup_scratch_growths\":"
                   << warmup.debug.scratch_capacity_growth_events
                   << ",\"timed_nodes_created\":" << created_nodes
                   << ",\"timed_nodes_reused\":" << reused_nodes
-                  << ",\"timed_node_buffer_growths\":" << node_buffer_growths
+                  << ",\"timed_edges_created\":" << created_edges
+                  << ",\"timed_edges_reused\":" << reused_edges
                   << ",\"timed_scratch_growths\":" << scratch_growths
                   << ",\"max_search_depth\":" << max_depth
                   << ",\"seconds\":" << seconds
