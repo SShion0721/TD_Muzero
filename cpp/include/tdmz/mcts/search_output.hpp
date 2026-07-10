@@ -14,6 +14,7 @@ struct RootSearchOutput {
     float root_value = 0.0f;
 
     std::vector<int> root_actions;
+    std::vector<float> root_priors;
     std::vector<int> visit_counts;
     std::vector<float> policy_full;   // size = kActionSpaceSize
 
