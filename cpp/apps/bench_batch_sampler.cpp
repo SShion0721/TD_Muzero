@@ -54,11 +54,12 @@ void print_help(const char* argv0) {
         << "Usage: " << argv0 << " --index data/selfplay/train.index.json [options]\n"
         << "\n"
         << "Options:\n"
-        << "  --index PATH      Shard index JSON from generate_selfplay_shards.\n"
-        << "  --batch-size N    Samples per batch. Default: 256\n"
-        << "  --batches N       Number of batches to sample. Default: 256\n"
-        << "  --seed N          Sampler seed. Default: 1234567\n"
-        << "  --help            Show this help.\n";
+        << "  --index PATH           Shard index JSON from generate_selfplay_shards.\n"
+        << "  --batch-size N         Samples per batch. Default: 256\n"
+        << "  --batches N            Number of batches to sample. Default: 256\n"
+        << "  --seed N               Sampler seed. Default: 1234567\n"
+        << "  --allow-legacy-index   Explicitly allow a reviewed v1/unversioned index.\n"
+        << "  --help                 Show this help.\n";
 }
 
 } // namespace
@@ -69,6 +70,7 @@ int main(int argc, char** argv) {
         int batch_size = 256;
         int batches = 256;
         uint64_t seed = 1234567;
+        bool allow_legacy_index = false;
 
         for (int i = 1; i < argc; ++i) {
             std::string arg = argv[i];
@@ -84,6 +86,8 @@ int main(int argc, char** argv) {
             } else if (arg == "--seed") {
                 if (i + 1 >= argc) throw std::runtime_error("Missing value for --seed");
                 seed = static_cast<uint64_t>(std::stoull(argv[++i]));
+            } else if (arg == "--allow-legacy-index") {
+                allow_legacy_index = true;
             } else if (arg == "--help" || arg == "-h") {
                 print_help(argv[0]);
                 return 0;
@@ -95,14 +99,20 @@ int main(int argc, char** argv) {
         if (batch_size <= 0) throw std::runtime_error("--batch-size must be positive");
         if (batches <= 0) throw std::runtime_error("--batches must be positive");
 
+        const LegacyReplayIndexPolicy legacy_policy = allow_legacy_index
+            ? LegacyReplayIndexPolicy::AllowV1
+            : LegacyReplayIndexPolicy::Reject;
+
         auto open_start = std::chrono::high_resolution_clock::now();
-        ReplayDataset dataset = ReplayDataset::from_index_json(index_path);
+        ReplayDataset dataset = ReplayDataset::from_index_json(index_path, legacy_policy);
         auto open_end = std::chrono::high_resolution_clock::now();
         double open_seconds = std::chrono::duration<double>(open_end - open_start).count();
         std::cout << std::fixed << std::setprecision(6)
                   << "{\"case\":\"open_dataset\""
                   << ",\"shards\":" << dataset.shard_count()
                   << ",\"games\":" << dataset.game_count()
+                  << ",\"index_version\":" << dataset.index_metadata().index_version
+                  << ",\"legacy_index\":" << (dataset.index_metadata().legacy_v1 ? "true" : "false")
                   << ",\"seconds\":" << open_seconds
                   << "}" << std::endl;
 

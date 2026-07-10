@@ -4,7 +4,9 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <regex>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -45,11 +47,55 @@ std::string unescape_json_string(const std::string& s) {
     return out;
 }
 
-std::vector<std::string> parse_shard_paths_from_index_json(const std::string& index_path) {
-    std::string text = read_text_file(index_path);
+std::optional<std::string> find_string_field(const std::string& text, const char* field) {
+    const std::regex pattern(
+        std::string("\\\"") + field + "\\\"\\s*:\\s*\\\"([^\\\"]*)\\\"");
+    std::smatch match;
+    if (!std::regex_search(text, match, pattern)) return std::nullopt;
+    return unescape_json_string(match[1].str());
+}
+
+std::optional<uint64_t> find_u64_field(const std::string& text, const char* field) {
+    const std::regex pattern(
+        std::string("\\\"") + field + "\\\"\\s*:\\s*([0-9]+)");
+    std::smatch match;
+    if (!std::regex_search(text, match, pattern)) return std::nullopt;
+    try {
+        return static_cast<uint64_t>(std::stoull(match[1].str()));
+    } catch (const std::exception&) {
+        throw std::runtime_error(std::string("Replay index invalid integer field '") + field + "'");
+    }
+}
+
+uint32_t require_u32_field(const std::string& text, const char* field) {
+    const auto value = find_u64_field(text, field);
+    if (!value) {
+        throw std::runtime_error(std::string("Replay index missing field '") + field + "'");
+    }
+    if (*value > std::numeric_limits<uint32_t>::max()) {
+        throw std::runtime_error(std::string("Replay index field '") + field + "' exceeds uint32 range");
+    }
+    return static_cast<uint32_t>(*value);
+}
+
+int require_int_field(const std::string& text, const char* field) {
+    const auto value = find_u64_field(text, field);
+    if (!value) {
+        throw std::runtime_error(std::string("Replay index missing field '") + field + "'");
+    }
+    if (*value > static_cast<uint64_t>(std::numeric_limits<int>::max())) {
+        throw std::runtime_error(std::string("Replay index field '") + field + "' exceeds int range");
+    }
+    return static_cast<int>(*value);
+}
+
+std::vector<std::string> parse_shard_paths(
+    const std::string& text,
+    const std::string& index_path
+) {
     std::vector<std::string> paths;
     const std::filesystem::path index_parent = std::filesystem::path(index_path).parent_path();
-    std::regex path_re("\\\"path\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"");
+    const std::regex path_re("\\\"path\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"");
     auto begin = std::sregex_iterator(text.begin(), text.end(), path_re);
     auto end = std::sregex_iterator();
     for (auto it = begin; it != end; ++it) {
@@ -62,8 +108,83 @@ std::vector<std::string> parse_shard_paths_from_index_json(const std::string& in
         }
         paths.push_back(shard_path.lexically_normal().string());
     }
-    if (paths.empty()) throw std::runtime_error("No shard paths found in replay index JSON: " + index_path);
+    if (paths.empty()) {
+        throw std::runtime_error("No shard paths found in replay index JSON: " + index_path);
+    }
     return paths;
+}
+
+ReplayIndexMetadata parse_index_metadata(
+    const std::string& text,
+    const std::string& index_path,
+    LegacyReplayIndexPolicy legacy_policy
+) {
+    const auto format = find_string_field(text, "format");
+    const auto version = find_u64_field(text, "version");
+
+    if (!format || !version) {
+        if (legacy_policy != LegacyReplayIndexPolicy::AllowV1) {
+            throw std::runtime_error(
+                "Replay index lacks explicit format/version metadata; pass AllowV1 only for a reviewed legacy index: " +
+                index_path);
+        }
+        ReplayIndexMetadata metadata;
+        metadata.format = format.value_or("");
+        metadata.index_version = version ? static_cast<uint32_t>(*version) : 1u;
+        metadata.legacy_v1 = true;
+        return metadata;
+    }
+
+    if (*format != kReplayIndexFormat) {
+        throw std::runtime_error(
+            "Replay index incompatible field 'format': actual=" + *format +
+            " expected=" + kReplayIndexFormat);
+    }
+
+    if (*version > std::numeric_limits<uint32_t>::max()) {
+        throw std::runtime_error("Replay index field 'version' exceeds uint32 range");
+    }
+
+    ReplayIndexMetadata metadata;
+    metadata.format = *format;
+    metadata.index_version = static_cast<uint32_t>(*version);
+
+    if (metadata.index_version == 1) {
+        if (legacy_policy != LegacyReplayIndexPolicy::AllowV1) {
+            throw std::runtime_error(
+                "Replay index version 1 is legacy and has no complete compatibility metadata; "
+                "pass AllowV1 only after reviewing its producer configuration: " + index_path);
+        }
+        metadata.legacy_v1 = true;
+        return metadata;
+    }
+
+    if (metadata.index_version != kReplayIndexVersion) {
+        std::ostringstream out;
+        out << "Replay index incompatible field 'version': actual=" << metadata.index_version
+            << " expected=" << kReplayIndexVersion;
+        throw std::runtime_error(out.str());
+    }
+
+    metadata.compatibility.replay_format_version = require_u32_field(text, "replay_format_version");
+    metadata.compatibility.environment_rule_version = require_u32_field(text, "environment_rule_version");
+    metadata.compatibility.observation_schema_version = require_u32_field(text, "observation_schema_version");
+    metadata.compatibility.action_space_version = require_u32_field(text, "action_space_version");
+    metadata.compatibility.reward_transform_version = require_u32_field(text, "reward_transform_version");
+    metadata.compatibility.network_architecture_version = require_u32_field(text, "network_architecture_version");
+    metadata.compatibility.board_width = require_int_field(text, "board_width");
+    metadata.compatibility.board_height = require_int_field(text, "board_height");
+    metadata.compatibility.observation_channels = require_int_field(text, "observation_channels");
+    metadata.compatibility.observation_size = require_int_field(text, "observation_size");
+    metadata.compatibility.action_space_size = require_int_field(text, "action_space_size");
+    metadata.compatibility.policy_size = require_int_field(text, "policy_size");
+    metadata.compatibility.legal_mask_size = require_int_field(text, "legal_mask_size");
+
+    validate_compatibility_metadata(
+        metadata.compatibility,
+        current_compatibility_metadata(),
+        "Replay index");
+    return metadata;
 }
 
 int checked_tensor_size(size_t size, const char* name) {
@@ -100,9 +221,37 @@ void ensure_step_tensor_sizes(
 
 } // namespace
 
+ReplayIndexInfo load_replay_index_json(
+    const std::string& index_path,
+    LegacyReplayIndexPolicy legacy_policy
+) {
+    const std::string text = read_text_file(index_path);
+    ReplayIndexInfo info;
+    info.index_path = index_path;
+    info.metadata = parse_index_metadata(text, index_path, legacy_policy);
+    info.shard_paths = parse_shard_paths(text, index_path);
+    return info;
+}
+
 ReplayDataset::ReplayDataset(std::vector<std::string> shard_paths)
     : shard_paths_(std::move(shard_paths)) {
-    if (shard_paths_.empty()) throw std::runtime_error("ReplayDataset requires at least one shard path");
+    open_shards();
+}
+
+ReplayDataset::ReplayDataset(
+    std::vector<std::string> shard_paths,
+    ReplayIndexMetadata index_metadata
+)
+    : shard_paths_(std::move(shard_paths)),
+      index_metadata_(std::move(index_metadata)),
+      has_index_metadata_(true) {
+    open_shards();
+}
+
+void ReplayDataset::open_shards() {
+    if (shard_paths_.empty()) {
+        throw std::runtime_error("ReplayDataset requires at least one shard path");
+    }
 
     readers_.reserve(shard_paths_.size());
     cumulative_games_.reserve(shard_paths_.size());
@@ -116,8 +265,12 @@ ReplayDataset::ReplayDataset(std::vector<std::string> shard_paths)
     if (total == 0) throw std::runtime_error("ReplayDataset contains zero games");
 }
 
-ReplayDataset ReplayDataset::from_index_json(const std::string& index_path) {
-    return ReplayDataset(parse_shard_paths_from_index_json(index_path));
+ReplayDataset ReplayDataset::from_index_json(
+    const std::string& index_path,
+    LegacyReplayIndexPolicy legacy_policy
+) {
+    ReplayIndexInfo info = load_replay_index_json(index_path, legacy_policy);
+    return ReplayDataset(std::move(info.shard_paths), std::move(info.metadata));
 }
 
 size_t ReplayDataset::shard_count() const {
@@ -232,7 +385,6 @@ ReplayBatch ReplayBatchSampler::sample_batch(int batch_size) {
             const TrajectoryStep& step = history.steps[step_index];
             ensure_step_tensor_sizes(
                 step, tensor_sizes_initialized, obs_size, policy_size, mask_size);
-
             if (batch.observations.empty() && tensor_sizes_initialized) {
                 batch.observation_size = obs_size;
                 batch.policy_size = policy_size;

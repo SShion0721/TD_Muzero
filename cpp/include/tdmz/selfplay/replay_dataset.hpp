@@ -1,4 +1,5 @@
 #pragma once
+#include "tdmz/core/compatibility.hpp"
 #include "tdmz/selfplay/game_history.hpp"
 #include "tdmz/selfplay/trajectory_writer.hpp"
 #include <cstddef>
@@ -38,15 +39,43 @@ struct ReplaySampleRef {
     size_t step_index = 0;
 };
 
+enum class LegacyReplayIndexPolicy {
+    Reject,
+    AllowV1,
+};
+
+struct ReplayIndexMetadata {
+    std::string format;
+    uint32_t index_version = 0;
+    bool legacy_v1 = false;
+    CompatibilityMetadata compatibility = current_compatibility_metadata();
+};
+
+struct ReplayIndexInfo {
+    std::string index_path;
+    std::vector<std::string> shard_paths;
+    ReplayIndexMetadata metadata;
+};
+
+ReplayIndexInfo load_replay_index_json(
+    const std::string& index_path,
+    LegacyReplayIndexPolicy legacy_policy = LegacyReplayIndexPolicy::Reject
+);
+
 class ReplayDataset {
 public:
     explicit ReplayDataset(std::vector<std::string> shard_paths);
 
-    static ReplayDataset from_index_json(const std::string& index_path);
+    static ReplayDataset from_index_json(
+        const std::string& index_path,
+        LegacyReplayIndexPolicy legacy_policy = LegacyReplayIndexPolicy::Reject
+    );
 
     size_t shard_count() const;
     size_t game_count() const;
     const std::vector<std::string>& shard_paths() const;
+    bool has_index_metadata() const { return has_index_metadata_; }
+    const ReplayIndexMetadata& index_metadata() const { return index_metadata_; }
 
     GameHistory read_game(size_t global_game_index);
     ReplaySampleRef sample_ref(uint64_t random_u64);
@@ -56,9 +85,18 @@ public:
     void reset_game_read_count() { game_read_count_ = 0; }
 
 private:
+    ReplayDataset(
+        std::vector<std::string> shard_paths,
+        ReplayIndexMetadata index_metadata
+    );
+
+    void open_shards();
+
     std::vector<std::string> shard_paths_;
     std::vector<std::unique_ptr<BinaryShardReader>> readers_;
     std::vector<size_t> cumulative_games_;
+    ReplayIndexMetadata index_metadata_;
+    bool has_index_metadata_ = false;
     uint64_t game_read_count_ = 0;
 };
 
