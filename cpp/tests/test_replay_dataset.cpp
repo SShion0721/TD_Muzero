@@ -86,8 +86,13 @@ void test_replay_dataset_batch_sampler() {
     CHECK_TRUE(g0.seed == shard0[0].seed);
     CHECK_TRUE(g3.seed == shard1[1].seed);
 
+    dataset.reset_game_read_count();
     ReplayBatchSampler sampler(dataset, 1234567);
     ReplayBatch batch = sampler.sample_batch(8);
+    CHECK_TRUE(dataset.game_read_count() > 0);
+    CHECK_TRUE(dataset.game_read_count() <= dataset.game_count());
+    CHECK_TRUE(dataset.game_read_count() < static_cast<uint64_t>(batch.batch_size));
+
     CHECK_TRUE(batch.batch_size == 8);
     CHECK_TRUE(batch.observation_size > 0);
     CHECK_TRUE(batch.policy_size > 0);
