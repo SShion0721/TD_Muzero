@@ -1,4 +1,5 @@
 #include "tdmz/core/action.hpp"
+#include "tdmz/core/enemy.hpp"
 #include "tdmz/core/engine.hpp"
 #include "tdmz/core/tower.hpp"
 #include <cmath>
@@ -31,6 +32,50 @@ void test_path_on_empty_grid() {
     CHECK_TRUE(path.front().second == env.spawn_y());
     CHECK_TRUE(path.back().first == env.base_x());
     CHECK_TRUE(path.back().second == env.base_y());
+}
+
+void test_fast_enemy_consumes_full_movement_distance() {
+    Enemy enemy(1, 0.0f, 0.0f, 10.0f, 2.8f, 1);
+    enemy.set_path({{1, 0}, {2, 0}, {3, 0}, {4, 0}});
+
+    enemy.step(1.0f);
+
+    CHECK_TRUE(std::abs(enemy.x - 2.8f) < 1e-5f);
+    CHECK_TRUE(std::abs(enemy.y) < 1e-5f);
+    CHECK_TRUE(enemy.path.size() == 2);
+    CHECK_TRUE(std::abs(enemy.target_x - 3.0f) < 1e-5f);
+    CHECK_TRUE(std::abs(enemy.target_y) < 1e-5f);
+}
+
+void test_slow_duration_spans_full_time_window() {
+    Enemy enemy(2, 0.0f, 0.0f, 10.0f, 2.0f, 1);
+    enemy.set_path({{1, 0}, {2, 0}, {3, 0}, {4, 0}, {5, 0}, {6, 0}});
+    enemy.apply_slow(0.5f, 2.0f);
+
+    enemy.step(1.0f);
+    CHECK_TRUE(std::abs(enemy.x - 1.0f) < 1e-5f);
+    CHECK_TRUE(std::abs(enemy.slow_timer - 1.0f) < 1e-5f);
+    CHECK_TRUE(std::abs(enemy.speed - 1.0f) < 1e-5f);
+
+    enemy.step(1.0f);
+    CHECK_TRUE(std::abs(enemy.x - 2.0f) < 1e-5f);
+    CHECK_TRUE(enemy.slow_timer == 0.0f);
+    CHECK_TRUE(enemy.speed == enemy.base_speed);
+
+    enemy.step(1.0f);
+    CHECK_TRUE(std::abs(enemy.x - 4.0f) < 1e-5f);
+}
+
+void test_slow_expiry_splits_large_dt() {
+    Enemy enemy(3, 0.0f, 0.0f, 10.0f, 2.0f, 1);
+    enemy.set_path({{1, 0}, {2, 0}, {3, 0}, {4, 0}, {5, 0}});
+    enemy.apply_slow(0.5f, 1.0f);
+
+    enemy.step(2.0f);
+
+    CHECK_TRUE(std::abs(enemy.x - 3.0f) < 1e-5f);
+    CHECK_TRUE(enemy.slow_timer == 0.0f);
+    CHECK_TRUE(enemy.speed == enemy.base_speed);
 }
 
 void test_place_upgrade_sell_economy() {
@@ -140,6 +185,9 @@ void test_placeable_and_legal_actions_are_cached() {
 int main() {
     test_constructor_rejects_non_11x11();
     test_path_on_empty_grid();
+    test_fast_enemy_consumes_full_movement_distance();
+    test_slow_duration_spans_full_time_window();
+    test_slow_expiry_splits_large_dt();
     test_place_upgrade_sell_economy();
     test_tower_upgrade_caps_at_level_five();
     test_invalid_action_penalty();
