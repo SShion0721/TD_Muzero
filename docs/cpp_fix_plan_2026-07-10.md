@@ -74,12 +74,34 @@ Pending architecture decision:
 - No canonical C++ trainer currently supervises or calibrates latent legality.
 - Integration or removal is deferred to Phase D because it changes checkpoints.
 
-### B2. MCTS layout and batching — pending
+### B2.1. MCTS node and scratch reuse — completed
 
-- Reuse search path, action, and evaluator scratch buffers.
-- Measure and remove per-simulation dynamic allocation.
-- Replace per-node child vectors with a contiguous edge pool after parity tests.
-- Batch leaf recurrent inference before lower-level GPU micro-optimization.
+- Retain one `NodePool` per `MCTS` instance instead of allocating its backing store for every search.
+- Reuse previously created node objects while resetting scalar search state.
+- Preserve each node's `actions` and `children` vector capacity between searches.
+- Reuse legal-action validation, initial-observation, recurrent-input, search-path, top-k, softmax, and root-noise buffers.
+- Keep inactive node IDs invalid after pool clear while retaining their storage for the next search.
+- Expose node creation/reuse, node-buffer growth, scratch-capacity growth, and maximum-depth diagnostics.
+- Warm the benchmark once and report allocation-growth events only for the timed repeated-search interval.
+
+Validation:
+
+- Repeated deterministic searches compare action, root value, root actions, priors, visits, full policy, node count, branching, and depth field-for-field.
+- After warm-up, identical searches create zero node objects and trigger zero node-buffer or scratch-capacity growth events.
+- Full Torch-disabled CTest passes on GitHub-hosted Ubuntu and Windows runners.
+
+### B2.2. Contiguous edge storage — pending
+
+- Replace per-node `actions` and `children` vectors with a contiguous edge pool.
+- Preserve action order, child lookup, tie-breaking, visit counts, Q values, and root outputs exactly.
+- Compare the old and new layouts under deterministic evaluator traces before removing the vector layout.
+
+### B2.3. Batched leaf inference — pending
+
+- Select multiple leaves without corrupting virtual tree state.
+- Submit one recurrent inference batch for the selected leaves.
+- Expand and back up each result deterministically.
+- Measure evaluator calls, batch occupancy, simulations per second, and search-strength parity.
 
 ## Phase C — replay and binary data path
 
@@ -190,9 +212,8 @@ Each completed phase must provide:
 
 ## Current execution order
 
-1. Implement B2 MCTS scratch reuse and allocation instrumentation.
-2. Replace per-node child vectors with contiguous edge storage after semantic parity.
-3. Add batched leaf recurrent inference.
-4. Implement D spatial action, policy, and legality architecture.
-5. Complete E1b trainer persistence, toolchain locking, and optional LibTorch CI.
-6. Run final locked release validation and benchmark reporting.
+1. Implement B2.2 contiguous edge storage with deterministic layout parity.
+2. Implement B2.3 batched leaf recurrent inference.
+3. Implement D spatial action, policy, and legality architecture.
+4. Complete E1b trainer persistence, toolchain locking, and optional LibTorch CI.
+5. Run final locked release validation and benchmark reporting.
