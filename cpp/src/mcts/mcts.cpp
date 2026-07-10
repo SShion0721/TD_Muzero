@@ -24,7 +24,10 @@ uint64_t required_nodes_for_search(
 } // namespace
 
 MCTS::MCTS(MCTSConfig cfg)
-    : cfg_(cfg), rng_(cfg.random_seed), node_pool_(cfg.max_nodes) {
+    : cfg_(cfg),
+      rng_(cfg.random_seed),
+      node_pool_(cfg.max_nodes),
+      edge_pool_(cfg.max_nodes - 1) {
     if (cfg_.num_simulations <= 0) {
         throw std::invalid_argument("MCTS num_simulations must be positive");
     }
@@ -102,8 +105,8 @@ RootSearchOutput MCTS::search_single(
     }
 
     node_pool_.clear();
+    edge_pool_.clear();
     scratch_capacity_growth_events_ = 0;
-    node_buffer_growth_events_ = 0;
     max_search_depth_ = 0;
     MinMaxStats minmax(cfg_.value_delta_max);
 
@@ -114,11 +117,11 @@ RootSearchOutput MCTS::search_single(
     initial_observation.assign(observation.begin(), observation.end());
 
     const int root_id = node_pool_.allocate();
-    EvalOutput init_out = net.initial_inference(initial_observations_scratch_);
-    validate_eval_output(init_out, 1, "initial inference");
+    EvalOutput initial_output = net.initial_inference(initial_observations_scratch_);
+    validate_eval_output(initial_output, 1, "initial inference");
     expand_node(
         node_pool_, root_id, -1, -1, 0.0f, 1.0f,
-        legal_actions, init_out.policy_logits[0]);
+        legal_actions, initial_output.policy_logits[0]);
     if (cfg_.add_root_noise && cfg_.root_noise_weight > 0.0f) {
         apply_root_noise(node_pool_, root_id);
     }
@@ -132,11 +135,11 @@ RootSearchOutput MCTS::search_single(
         search_path_scratch_.push_back(current);
 
         while (node_pool_.get(current).expanded()) {
-            const int next_child = select_child(node_pool_, current, minmax);
-            if (next_child < 0) {
-                throw std::runtime_error("MCTS failed to select a child from an expanded node");
+            const int edge_id = select_child_edge(node_pool_, current, minmax);
+            if (edge_id < 0) {
+                throw std::runtime_error("MCTS failed to select an edge from an expanded node");
             }
-            current = node_pool_.get(current).children[static_cast<size_t>(next_child)];
+            current = edge_pool_.get(edge_id).child;
             if (search_path_scratch_.size() == search_path_scratch_.capacity()) {
                 ++scratch_capacity_growth_events_;
             }
@@ -157,9 +160,9 @@ RootSearchOutput MCTS::search_single(
         const float reward = recurrent_output.rewards[0];
         const auto& topk_actions = select_topk_candidates(
             recurrent_output.policy_logits[0], cfg_.latent_top_k);
-
         debug.max_latent_branching = std::max(
             debug.max_latent_branching, static_cast<int>(topk_actions.size()));
+
         expand_node(
             node_pool_, current, leaf.parent, leaf.action_from_parent,
             reward, leaf.prior, topk_actions, recurrent_output.policy_logits[0]);
@@ -167,11 +170,17 @@ RootSearchOutput MCTS::search_single(
     }
 
     debug.total_nodes = node_pool_.size();
+    debug.total_edges = edge_pool_.size();
     debug.max_search_depth = max_search_depth_;
     debug.node_objects_created = node_pool_.new_nodes_this_search();
     debug.node_objects_reused = node_pool_.reused_nodes_this_search();
-    debug.node_buffer_growth_events = node_buffer_growth_events_;
+    debug.edge_objects_created = edge_pool_.created_edges_this_search();
+    debug.edge_objects_reused = edge_pool_.reused_edges_this_search();
     debug.scratch_capacity_growth_events = scratch_capacity_growth_events_;
+
+    if (debug.total_edges != debug.total_nodes - 1) {
+        throw std::runtime_error("MCTS tree edge count does not equal node count minus one");
+    }
 
     RootSearchOutput output;
     output.root_value = node_pool_.get(root_id).value();
@@ -179,31 +188,32 @@ RootSearchOutput MCTS::search_single(
 
     int best_action = -1;
     int best_visit_count = -1;
-    const Node& root_node = node_pool_.get(root_id);
-    output.root_actions = root_node.actions;
-    output.root_priors.resize(root_node.actions.size());
-    output.visit_counts.resize(root_node.actions.size());
+    const Node& root = node_pool_.get(root_id);
+    output.root_actions.resize(static_cast<size_t>(root.edge_count));
+    output.root_priors.resize(static_cast<size_t>(root.edge_count));
+    output.visit_counts.resize(static_cast<size_t>(root.edge_count));
     output.policy_full.assign(kActionSpaceSize, 0.0f);
 
     float total_visits = 0.0f;
-    for (int i = 0; i < static_cast<int>(root_node.actions.size()); ++i) {
-        const int child_id = root_node.children[static_cast<size_t>(i)];
-        const Node& child = node_pool_.get(child_id);
-        const int visit_count = child.visit_count;
-        output.root_priors[static_cast<size_t>(i)] = child.prior;
-        output.visit_counts[static_cast<size_t>(i)] = visit_count;
-        total_visits += static_cast<float>(visit_count);
-        if (visit_count > best_visit_count) {
-            best_visit_count = visit_count;
-            best_action = root_node.actions[static_cast<size_t>(i)];
+    for (int offset = 0; offset < root.edge_count; ++offset) {
+        const Edge& edge = edge_pool_.get(root.first_edge + offset);
+        const Node& child = node_pool_.get(edge.child);
+        output.root_actions[static_cast<size_t>(offset)] = edge.action;
+        output.root_priors[static_cast<size_t>(offset)] = child.prior;
+        output.visit_counts[static_cast<size_t>(offset)] = child.visit_count;
+        total_visits += static_cast<float>(child.visit_count);
+        if (child.visit_count > best_visit_count) {
+            best_visit_count = child.visit_count;
+            best_action = edge.action;
         }
     }
 
     output.action = best_action;
     if (total_visits > 0.0f) {
-        for (int i = 0; i < static_cast<int>(root_node.actions.size()); ++i) {
-            output.policy_full[static_cast<size_t>(root_node.actions[static_cast<size_t>(i)])]
-                = output.visit_counts[static_cast<size_t>(i)] / total_visits;
+        for (int offset = 0; offset < root.edge_count; ++offset) {
+            const int action = output.root_actions[static_cast<size_t>(offset)];
+            output.policy_full[static_cast<size_t>(action)]
+                = output.visit_counts[static_cast<size_t>(offset)] / total_visits;
         }
     }
     return output;
@@ -219,8 +229,12 @@ int MCTS::expand_node(
     const std::vector<int>& candidate_actions,
     const std::vector<float>& policy_logits
 ) {
+    const int edge_count = static_cast<int>(candidate_actions.size());
     if (candidate_actions.size() > static_cast<size_t>(pool.remaining())) {
         throw std::runtime_error("NodePool capacity is insufficient for atomic node expansion");
+    }
+    if (edge_count > edge_pool_.remaining()) {
+        throw std::runtime_error("EdgePool capacity is insufficient for atomic node expansion");
     }
 
     Node& node = pool.get(node_id);
@@ -228,36 +242,32 @@ int MCTS::expand_node(
     node.action_from_parent = action_from_parent;
     node.reward = reward;
     node.prior = prior;
-
-    if (node.actions.capacity() < candidate_actions.size()) {
-        ++node_buffer_growth_events_;
-    }
-    node.actions.assign(candidate_actions.begin(), candidate_actions.end());
-    if (node.children.capacity() < candidate_actions.size()) {
-        ++node_buffer_growth_events_;
-    }
-    node.children.resize(candidate_actions.size());
+    node.first_edge = edge_pool_.allocate_range(edge_count);
+    node.edge_count = edge_count;
 
     const auto& priors = softmax_over_actions(policy_logits, candidate_actions);
-    for (int i = 0; i < static_cast<int>(candidate_actions.size()); ++i) {
+    for (int offset = 0; offset < edge_count; ++offset) {
         const int child_id = pool.allocate();
         Node& child = pool.get(child_id);
         child.parent = node_id;
-        child.action_from_parent = candidate_actions[static_cast<size_t>(i)];
-        child.prior = priors[static_cast<size_t>(i)];
-        pool.get(node_id).children[static_cast<size_t>(i)] = child_id;
+        child.action_from_parent = candidate_actions[static_cast<size_t>(offset)];
+        child.prior = priors[static_cast<size_t>(offset)];
+
+        Edge& edge = edge_pool_.get(node.first_edge + offset);
+        edge.action = candidate_actions[static_cast<size_t>(offset)];
+        edge.child = child_id;
     }
     return node_id;
 }
 
 void MCTS::apply_root_noise(NodePool& pool, int root_id) {
     Node& root = pool.get(root_id);
-    if (root.children.empty()) return;
+    if (!root.expanded()) return;
 
-    if (root_noise_scratch_.capacity() < root.children.size()) {
+    if (root_noise_scratch_.capacity() < static_cast<size_t>(root.edge_count)) {
         ++scratch_capacity_growth_events_;
     }
-    root_noise_scratch_.resize(root.children.size());
+    root_noise_scratch_.resize(static_cast<size_t>(root.edge_count));
     std::gamma_distribution<double> gamma(
         static_cast<double>(cfg_.root_dirichlet_alpha), 1.0);
     double sum = 0.0;
@@ -274,10 +284,12 @@ void MCTS::apply_root_noise(NodePool& pool, int root_id) {
     }
 
     const float keep = 1.0f - cfg_.root_noise_weight;
-    for (size_t i = 0; i < root.children.size(); ++i) {
-        Node& child = pool.get(root.children[i]);
+    for (int offset = 0; offset < root.edge_count; ++offset) {
+        const Edge& edge = edge_pool_.get(root.first_edge + offset);
+        Node& child = pool.get(edge.child);
         child.prior = keep * child.prior
-            + cfg_.root_noise_weight * static_cast<float>(root_noise_scratch_[i]);
+            + cfg_.root_noise_weight * static_cast<float>(
+                root_noise_scratch_[static_cast<size_t>(offset)]);
     }
 }
 
@@ -310,23 +322,25 @@ void MCTS::validate_eval_output(
     }
 }
 
-int MCTS::select_child(
+int MCTS::select_child_edge(
     const NodePool& pool,
     int node_id,
     const MinMaxStats& minmax
 ) const {
     const Node& node = pool.get(node_id);
-    int best_index = -1;
+    int best_edge = -1;
     float best_score = -std::numeric_limits<float>::infinity();
-    for (int i = 0; i < static_cast<int>(node.children.size()); ++i) {
-        const Node& child = pool.get(node.children[static_cast<size_t>(i)]);
+    for (int offset = 0; offset < node.edge_count; ++offset) {
+        const int edge_id = node.first_edge + offset;
+        const Edge& edge = edge_pool_.get(edge_id);
+        const Node& child = pool.get(edge.child);
         const float score = ucb_score(node, child, minmax);
         if (score > best_score) {
             best_score = score;
-            best_index = i;
+            best_edge = edge_id;
         }
     }
-    return best_index;
+    return best_edge;
 }
 
 float MCTS::ucb_score(
