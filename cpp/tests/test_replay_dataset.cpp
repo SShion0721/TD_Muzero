@@ -135,9 +135,11 @@ void test_index_relative_shard_path() {
     out << "{\"shards\":[{\"path\":\"data.tdmzshd\"}]}\n";
     out.close();
 
-    ReplayDataset dataset = ReplayDataset::from_index_json(index_path.string());
-    CHECK_TRUE(dataset.game_count() == 1);
-    CHECK_TRUE(dataset.read_game(0).seed == 600);
+    {
+        ReplayDataset dataset = ReplayDataset::from_index_json(index_path.string());
+        CHECK_TRUE(dataset.game_count() == 1);
+        CHECK_TRUE(dataset.read_game(0).seed == 600);
+    }
 
     std::filesystem::remove_all(dir);
 }
