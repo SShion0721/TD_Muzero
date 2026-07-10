@@ -20,12 +20,16 @@ struct BenchResult {
     int policy_size = 0;
     int legal_mask_size = 0;
     uint64_t bytes = 0;
+    uint64_t game_reads = 0;
     double seconds = 0.0;
     double checksum = 0.0;
 };
 
 void print_result(const BenchResult& r) {
     double mb = static_cast<double>(r.bytes) / (1024.0 * 1024.0);
+    double samples_per_game_read = r.game_reads > 0
+        ? static_cast<double>(r.samples) / static_cast<double>(r.game_reads)
+        : 0.0;
     std::cout << std::fixed << std::setprecision(6)
               << "{\"case\":\"" << r.name << "\""
               << ",\"batches\":" << r.batches
@@ -34,6 +38,8 @@ void print_result(const BenchResult& r) {
               << ",\"observation_size\":" << r.observation_size
               << ",\"policy_size\":" << r.policy_size
               << ",\"legal_mask_size\":" << r.legal_mask_size
+              << ",\"game_reads\":" << r.game_reads
+              << ",\"samples_per_game_read\":" << samples_per_game_read
               << ",\"seconds\":" << r.seconds
               << ",\"batches_per_second\":" << (r.seconds > 0.0 ? r.batches / r.seconds : 0.0)
               << ",\"samples_per_second\":" << (r.seconds > 0.0 ? r.samples / r.seconds : 0.0)
@@ -107,6 +113,7 @@ int main(int argc, char** argv) {
         r.batches = batches;
         r.samples = batch_size * batches;
 
+        dataset.reset_game_read_count();
         auto start = std::chrono::high_resolution_clock::now();
         for (int i = 0; i < batches; ++i) {
             ReplayBatch batch = sampler.sample_batch(batch_size);
@@ -120,6 +127,7 @@ int main(int argc, char** argv) {
         }
         auto end = std::chrono::high_resolution_clock::now();
         r.seconds = std::chrono::duration<double>(end - start).count();
+        r.game_reads = dataset.game_read_count();
         print_result(r);
         return 0;
     } catch (const std::exception& e) {
