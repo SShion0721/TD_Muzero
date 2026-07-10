@@ -88,12 +88,19 @@ The current RL path uses one-second actions, but the public `step_time(float dt)
 
 For a batch of 2048 drawn from 128 games, the compatibility path now performs at most 128 whole-game reads in that batch instead of 2048. A transition-level format is still required for large datasets where most sampled games are unique.
 
-### C1. Writer and reader hardening — pending
+### C1. Writer and reader hardening — completed
 
-- Give the async writer an explicit `Open -> Closing -> Closed/Failed` state machine.
+- Add an explicit async writer `Open -> Closing -> Closed/Failed` state machine.
 - Reject writes as soon as closing begins and serialize concurrent `close()` calls.
-- Add file-size, offset, step-count, tensor-size, and multiplication-overflow validation.
-- Write shards to temporary paths and atomically publish completed files.
+- Propagate worker failures consistently to waiting producers and closers.
+- Validate file size, offset-table size, first and monotonic offsets, per-history boundaries, tensor sizes, stream-size limits, and multiplication overflow before allocation.
+- Reject invalid flags, non-finite step scalars, malformed empty histories, truncated payloads, and oversized tensor headers.
+- Write shards to unique temporary paths in the destination directory, flush and close them completely, then atomically publish them.
+- Use POSIX same-directory rename and Windows `MoveFileExW` with replacement and write-through semantics.
+- Remove incomplete temporary shards after failure.
+- Add regressions for atomic visibility, concurrent close, write rejection after closing, incomplete close cleanup, invalid offsets, truncation, and oversized headers.
+
+Compatibility impact: the version-1 on-disk layout is unchanged. Previously accepted malformed or trailing-byte files are now rejected.
 
 ### C2. Transition-level replay format — pending
 
@@ -139,7 +146,7 @@ Every completed phase should provide:
 - explicit replay/checkpoint compatibility statement;
 - commit SHA recorded in the phase notes.
 
-The connected GitHub status endpoint currently exposes no push-triggered check result for these commits. Therefore this document records the added CI configuration but does not claim that the remote Linux/Windows jobs passed.
+The C1 pull-request gate passed the complete Torch-disabled CTest suite on both `ubuntu-latest` and `windows-latest`. Push-triggered status visibility remains limited through the connected API, so CI claims in this document are restricted to runs whose jobs were explicitly inspected.
 
 ## Current completed commits
 
@@ -165,6 +172,7 @@ The connected GitHub status endpoint currently exposes no push-triggered check r
 - `ce05ac203f85cb0ecfde717c8e625d484c0913d0` — group batch samples by game and write directly into flat buffers
 - `4dfd06ad7fd324eb99a0bdfe06f207cffe7978ec` — verify one whole-game read per sampled game
 - `702be27a0100815148e86c64e49bc0cfd3bec770` — report physical game reads in the batch benchmark
+- `83bc98069671b429ede79fcaf9d0ab07d2b986f3` — async writer lifecycle, atomic shard publication, and bounded reader validation
 
 ### MCTS and LibTorch contracts
 
@@ -180,7 +188,7 @@ The connected GitHub status endpoint currently exposes no push-triggered check r
 ### Build and CI
 
 - `0daa6a17cbb54fd92bd402b66bf8594744f6377f` — Linux and Windows C++ core CI
-- `cbb0caad816367461ff159c4bd801acfec30d3d8` — explicit source lists and target-scoped build settings
+- `cbb0caad816367461ff159c4dcf90f5d7b64e5f9c` — explicit source lists and target-scoped build settings
 
 New Golden Trace values after A1:
 
