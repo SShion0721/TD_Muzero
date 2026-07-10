@@ -52,10 +52,14 @@ public:
     ReplaySampleRef sample_ref(uint64_t random_u64);
     TrajectoryStep sample_step(uint64_t random_u64);
 
+    uint64_t game_read_count() const { return game_read_count_; }
+    void reset_game_read_count() { game_read_count_ = 0; }
+
 private:
     std::vector<std::string> shard_paths_;
     std::vector<std::unique_ptr<BinaryShardReader>> readers_;
     std::vector<size_t> cumulative_games_;
+    uint64_t game_read_count_ = 0;
 };
 
 class ReplayBatchSampler {
