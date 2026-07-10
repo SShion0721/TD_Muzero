@@ -1,5 +1,4 @@
 #pragma once
-#include <vector>
 
 namespace tdmz {
 
@@ -15,8 +14,8 @@ struct Node {
     int latent_index = -1;
     int batch_index = -1;
 
-    std::vector<int> actions;
-    std::vector<int> children;
+    int first_edge = -1;
+    int edge_count = 0;
 
     void reset_for_reuse() {
         parent = -1;
@@ -27,24 +26,17 @@ struct Node {
         reward = 0.0f;
         latent_index = -1;
         batch_index = -1;
-        actions.clear();
-        children.clear();
+        first_edge = -1;
+        edge_count = 0;
     }
 
     bool expanded() const {
-        return !actions.empty();
+        return edge_count > 0;
     }
 
     float value() const {
         if (visit_count == 0) return 0.0f;
         return value_sum / static_cast<float>(visit_count);
-    }
-
-    int child_index_for_action(int action) const {
-        for (int i = 0; i < static_cast<int>(actions.size()); ++i) {
-            if (actions[i] == action) return i;
-        }
-        return -1;
     }
 };
 
