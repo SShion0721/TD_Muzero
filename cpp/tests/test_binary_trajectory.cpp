@@ -1,14 +1,21 @@
 #include "tdmz/mcts/dummy_network.hpp"
 #include "tdmz/selfplay/selfplay_runner.hpp"
 #include "tdmz/selfplay/trajectory_writer.hpp"
+#include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <exception>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace tdmz;
+namespace fs = std::filesystem;
 
 static void check_true(bool ok, const char* expr, int line) {
     if (!ok) throw std::runtime_error(std::string("check failed at line ") + std::to_string(line) + ": " + expr);
@@ -19,6 +26,22 @@ static void check_close(float a, float b, const char* label) {
     if (std::fabs(a - b) > 1e-6f) {
         throw std::runtime_error(std::string("float mismatch: ") + label);
     }
+}
+
+template <typename Fn>
+static void check_throws(Fn&& fn, const char* label) {
+    bool threw = false;
+    try {
+        fn();
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    if (!threw) throw std::runtime_error(std::string("expected exception: ") + label);
+}
+
+static void remove_if_exists(const std::string& path) {
+    std::error_code ec;
+    fs::remove(path, ec);
 }
 
 static void assert_history_equal(const GameHistory& a, const GameHistory& b) {
@@ -64,10 +87,20 @@ static GameHistory make_tiny_history(uint64_t seed, int max_steps) {
     return history;
 }
 
+template <typename T>
+static void overwrite_scalar(const std::string& path, std::streamoff offset, const T& value) {
+    std::fstream file(path, std::ios::binary | std::ios::in | std::ios::out);
+    if (!file) throw std::runtime_error("failed to open corruption target");
+    file.seekp(offset, std::ios::beg);
+    file.write(reinterpret_cast<const char*>(&value), sizeof(value));
+    if (!file) throw std::runtime_error("failed to corrupt binary test file");
+}
+
 void test_binary_roundtrip_selfplay() {
     GameHistory history = make_tiny_history(123, 12);
 
     const std::string path = "test_binary_trajectory.tdmzspb";
+    remove_if_exists(path);
     write_history_binary(history, path);
     GameHistory loaded = read_history_binary(path);
     assert_history_equal(history, loaded);
@@ -81,6 +114,7 @@ void test_binary_roundtrip_empty_history() {
     history.total_reward = 0.0f;
 
     const std::string path = "test_binary_empty.tdmzspb";
+    remove_if_exists(path);
     write_history_binary(history, path);
     GameHistory loaded = read_history_binary(path);
     assert_history_equal(history, loaded);
@@ -93,6 +127,7 @@ void test_binary_shard_roundtrip() {
     histories.push_back(make_tiny_history(202, 10));
 
     const std::string path = "test_binary_shard.tdmzshd";
+    remove_if_exists(path);
     write_histories_binary_shard(histories, path);
 
     auto loaded = read_histories_binary_shard(path);
@@ -116,7 +151,21 @@ void test_binary_shard_roundtrip() {
     }
 }
 
-void test_async_binary_shard_roundtrip() {
+void test_atomic_shard_publication() {
+    const std::string path = "test_atomic_publish.tdmzshd";
+    remove_if_exists(path);
+    GameHistory history = make_tiny_history(250, 8);
+
+    BinaryShardWriter writer(path, 1);
+    CHECK_TRUE(!fs::exists(path));
+    writer.write_history(history);
+    CHECK_TRUE(!fs::exists(path));
+    writer.close();
+    CHECK_TRUE(fs::exists(path));
+    assert_history_equal(history, read_history_binary_shard_at(path, 0));
+}
+
+void test_async_binary_shard_roundtrip_and_concurrent_close() {
     std::vector<GameHistory> histories;
     histories.push_back(make_tiny_history(300, 8));
     histories.push_back(make_tiny_history(301, 9));
@@ -124,30 +173,84 @@ void test_async_binary_shard_roundtrip() {
     histories.push_back(make_tiny_history(303, 11));
 
     const std::string path = "test_async_binary_shard.tdmzshd";
+    remove_if_exists(path);
     {
-        // Queue size 1 forces producer/writer backpressure in the test.
         AsyncBinaryShardWriter writer(path, histories.size(), 1);
-        for (auto& history : histories) {
-            writer.write_history(history);
-        }
+        for (auto& history : histories) writer.write_history(history);
         CHECK_TRUE(writer.enqueued_count() == histories.size());
-        writer.close();
+
+        std::exception_ptr first_error;
+        std::exception_ptr second_error;
+        std::thread first([&] {
+            try { writer.close(); } catch (...) { first_error = std::current_exception(); }
+        });
+        std::thread second([&] {
+            try { writer.close(); } catch (...) { second_error = std::current_exception(); }
+        });
+        first.join();
+        second.join();
+        CHECK_TRUE(!first_error);
+        CHECK_TRUE(!second_error);
+        CHECK_TRUE(writer.state() == AsyncBinaryShardWriterState::Closed);
         CHECK_TRUE(writer.closed());
     }
 
     auto loaded = read_histories_binary_shard(path);
     CHECK_TRUE(loaded.size() == histories.size());
-    for (size_t i = 0; i < histories.size(); ++i) {
-        assert_history_equal(histories[i], loaded[i]);
+    for (size_t i = 0; i < histories.size(); ++i) assert_history_equal(histories[i], loaded[i]);
+}
+
+void test_async_rejects_write_after_closing_begins() {
+    const std::string path = "test_async_closing_reject.tdmzshd";
+    remove_if_exists(path);
+    GameHistory first = make_tiny_history(350, 8);
+    GameHistory second = make_tiny_history(351, 8);
+
+    AsyncBinaryShardWriter writer(path, 2, 1);
+    writer.write_history(first);
+    std::exception_ptr close_error;
+    std::thread closer([&] {
+        try { writer.close(); } catch (...) { close_error = std::current_exception(); }
+    });
+
+    for (int i = 0; i < 10000 && writer.state() == AsyncBinaryShardWriterState::Open; ++i) {
+        std::this_thread::yield();
     }
+    CHECK_TRUE(writer.state() != AsyncBinaryShardWriterState::Open);
+    check_throws([&] { writer.write_history(std::move(second)); }, "write after closing begins");
+    closer.join();
+    CHECK_TRUE(close_error != nullptr);
+    CHECK_TRUE(writer.state() == AsyncBinaryShardWriterState::Failed);
+    CHECK_TRUE(!fs::exists(path));
+}
 
-    GameHistory loaded_one = read_history_binary_shard_at(path, 2);
-    assert_history_equal(histories[2], loaded_one);
+void test_reader_rejects_invalid_offset_table() {
+    const std::string path = "test_bad_offset.tdmzshd";
+    remove_if_exists(path);
+    write_histories_binary_shard({make_tiny_history(400, 8)}, path);
+    const uint64_t invalid_offset = 1;
+    overwrite_scalar(path, 24, invalid_offset);
+    check_throws([&] { BinaryShardReader reader(path); }, "invalid shard offset");
+}
 
+void test_reader_rejects_truncated_history() {
+    const std::string path = "test_truncated_shard.tdmzshd";
+    remove_if_exists(path);
+    write_histories_binary_shard({make_tiny_history(410, 8)}, path);
+    const auto size = fs::file_size(path);
+    CHECK_TRUE(size > 0);
+    fs::resize_file(path, size - 1);
     BinaryShardReader reader(path);
-    CHECK_TRUE(reader.history_count() == histories.size());
-    assert_history_equal(histories[1], reader.read_at(1));
-    assert_history_equal(histories[3], reader.read_at(3));
+    check_throws([&] { (void)reader.read_at(0); }, "truncated shard history");
+}
+
+void test_reader_rejects_oversized_tensor_header_before_allocation() {
+    const std::string path = "test_oversized_tensor.tdmzspb";
+    remove_if_exists(path);
+    write_history_binary(make_tiny_history(420, 8), path);
+    const uint32_t huge = std::numeric_limits<uint32_t>::max();
+    overwrite_scalar(path, 16, huge);
+    check_throws([&] { (void)read_history_binary(path); }, "oversized tensor header");
 }
 
 int main() {
@@ -155,7 +258,12 @@ int main() {
         test_binary_roundtrip_selfplay();
         test_binary_roundtrip_empty_history();
         test_binary_shard_roundtrip();
-        test_async_binary_shard_roundtrip();
+        test_atomic_shard_publication();
+        test_async_binary_shard_roundtrip_and_concurrent_close();
+        test_async_rejects_write_after_closing_begins();
+        test_reader_rejects_invalid_offset_table();
+        test_reader_rejects_truncated_history();
+        test_reader_rejects_oversized_tensor_header_before_allocation();
         std::cout << "Binary trajectory tests passed!" << std::endl;
         return 0;
     } catch (const std::exception& e) {
