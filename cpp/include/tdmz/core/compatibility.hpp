@@ -10,7 +10,8 @@ namespace tdmz {
 
 inline constexpr const char* kReplayIndexFormat = "tdmz_selfplay_shard_index";
 inline constexpr uint32_t kReplayIndexVersion = 2;
-inline constexpr uint32_t kReplayBinaryFormatVersion = 1;
+inline constexpr uint32_t kReplayBinaryFormatVersion = 2;
+inline constexpr uint32_t kLegacyReplayBinaryFormatVersion = 1;
 inline constexpr uint32_t kEnvironmentRuleVersion = 1;
 inline constexpr uint32_t kObservationSchemaVersion = 1;
 inline constexpr uint32_t kActionSpaceVersion = 1;
