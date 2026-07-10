@@ -15,6 +15,11 @@ struct SearchDebugStats {
     int edge_objects_created = 0;
     int edge_objects_reused = 0;
     int scratch_capacity_growth_events = 0;
+
+    int recurrent_evaluator_calls = 0;
+    int recurrent_evaluator_samples = 0;
+    int max_recurrent_batch_size = 0;
+    int leaf_batch_collision_stops = 0;
 };
 
 struct RootSearchOutput {

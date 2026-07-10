@@ -58,6 +58,10 @@ add_executable(test_mcts_scratch_reuse test_mcts_scratch_reuse.cpp)
 target_link_libraries(test_mcts_scratch_reuse tdmz_core)
 add_test(NAME test_mcts_scratch_reuse COMMAND test_mcts_scratch_reuse)
 
+add_executable(test_mcts_batched_inference test_mcts_batched_inference.cpp)
+target_link_libraries(test_mcts_batched_inference tdmz_core)
+add_test(NAME test_mcts_batched_inference COMMAND test_mcts_batched_inference)
+
 add_executable(test_selfplay test_selfplay.cpp)
 target_link_libraries(test_selfplay tdmz_core)
 add_test(NAME test_selfplay COMMAND test_selfplay)
