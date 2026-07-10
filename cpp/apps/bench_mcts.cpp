@@ -3,6 +3,7 @@
 #include "tdmz/mcts/dummy_network.hpp"
 #include "tdmz/mcts/mcts.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <iomanip>
