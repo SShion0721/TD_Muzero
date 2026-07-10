@@ -18,7 +18,9 @@ GameHistory SelfPlayRunner::run(TDEngine& env, INetworkEvaluator& evaluator) con
     history.seed = cfg_.seed;
     history.max_steps = cfg_.max_steps;
 
-    MCTS mcts(cfg_.mcts);
+    MCTSConfig mcts_cfg = cfg_.mcts;
+    mcts_cfg.random_seed = cfg_.seed;
+    MCTS mcts(mcts_cfg);
 
     for (int step = 0; step < cfg_.max_steps; ++step) {
         if (cfg_.stop_on_terminal && env.game_over()) {
