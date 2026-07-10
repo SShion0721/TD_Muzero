@@ -4,6 +4,7 @@
 #include "tdmz/selfplay/trajectory_writer.hpp"
 #include <cmath>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -29,6 +30,20 @@ static GameHistory make_tiny_history(uint64_t seed, int max_steps) {
     SelfPlayRunner runner(cfg);
     GameHistory history = runner.run(net);
     CHECK_TRUE(!history.steps.empty());
+    return history;
+}
+
+static GameHistory make_single_step_history(uint64_t seed, size_t tensor_size) {
+    GameHistory history;
+    history.seed = seed;
+    history.max_steps = 1;
+
+    TrajectoryStep step;
+    step.action = kFlatWaitOffset;
+    step.observation.assign(tensor_size, 1.0f);
+    step.policy_target.assign(tensor_size, tensor_size == 0 ? 0.0f : 1.0f / static_cast<float>(tensor_size));
+    step.legal_mask.assign(tensor_size, 1u);
+    history.steps.push_back(std::move(step));
     return history;
 }
 
@@ -88,9 +103,50 @@ void test_replay_dataset_batch_sampler() {
     CHECK_TRUE(std::isfinite(replay_batch_checksum(batch)));
 }
 
+void test_zero_length_first_sample_does_not_hide_shape_mismatch() {
+    const std::string shard_path = "test_replay_zero_shape.tdmzshd";
+    write_histories_binary_shard(
+        {make_single_step_history(500, 0), make_single_step_history(501, 4)},
+        shard_path
+    );
+
+    ReplayDataset dataset({shard_path});
+    ReplayBatchSampler sampler(dataset, 2);
+    bool threw = false;
+    try {
+        (void)sampler.sample_batch(2);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    CHECK_TRUE(threw);
+}
+
+void test_index_relative_shard_path() {
+    const std::filesystem::path dir = "test_replay_relative_dir";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+
+    const std::filesystem::path shard_path = dir / "data.tdmzshd";
+    const std::filesystem::path index_path = dir / "index.json";
+    write_histories_binary_shard({make_single_step_history(600, 3)}, shard_path.string());
+
+    std::ofstream out(index_path);
+    CHECK_TRUE(out.good());
+    out << "{\"shards\":[{\"path\":\"data.tdmzshd\"}]}\n";
+    out.close();
+
+    ReplayDataset dataset = ReplayDataset::from_index_json(index_path.string());
+    CHECK_TRUE(dataset.game_count() == 1);
+    CHECK_TRUE(dataset.read_game(0).seed == 600);
+
+    std::filesystem::remove_all(dir);
+}
+
 int main() {
     try {
         test_replay_dataset_batch_sampler();
+        test_zero_length_first_sample_does_not_hide_shape_mismatch();
+        test_index_relative_shard_path();
         std::cout << "Replay dataset tests passed!" << std::endl;
         return 0;
     } catch (const std::exception& e) {
