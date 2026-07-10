@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <random>
 #include <string>
 #include <utility>
@@ -38,6 +39,11 @@ private:
     std::vector<float> priors_scratch_;
     std::vector<double> root_noise_scratch_;
 
+    std::vector<std::vector<int>> pending_paths_scratch_;
+    std::vector<int> pending_leaf_ids_scratch_;
+    std::vector<uint32_t> leaf_reservation_marks_;
+    uint32_t leaf_reservation_epoch_ = 0;
+
     int scratch_capacity_growth_events_ = 0;
     int max_search_depth_ = 0;
 
@@ -65,6 +71,17 @@ private:
         int node_id,
         const MinMaxStats& minmax
     ) const;
+
+    int select_leaf_path(
+        const NodePool& pool,
+        int root_id,
+        const MinMaxStats& minmax,
+        std::vector<int>& path
+    );
+
+    void apply_virtual_visits(NodePool& pool, const std::vector<int>& path) const;
+    void undo_virtual_visits(NodePool& pool, const std::vector<int>& path) const;
+    void begin_leaf_reservation_epoch();
 
     float ucb_score(
         const Node& parent,
