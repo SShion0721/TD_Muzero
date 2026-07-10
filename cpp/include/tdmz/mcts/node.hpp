@@ -18,6 +18,19 @@ struct Node {
     std::vector<int> actions;
     std::vector<int> children;
 
+    void reset_for_reuse() {
+        parent = -1;
+        action_from_parent = -1;
+        visit_count = 0;
+        prior = 0.0f;
+        value_sum = 0.0f;
+        reward = 0.0f;
+        latent_index = -1;
+        batch_index = -1;
+        actions.clear();
+        children.clear();
+    }
+
     bool expanded() const {
         return !actions.empty();
     }

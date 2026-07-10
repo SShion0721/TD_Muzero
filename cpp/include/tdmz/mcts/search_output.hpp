@@ -7,6 +7,12 @@ struct SearchDebugStats {
     int total_nodes = 0;
     int max_root_branching = 0;
     int max_latent_branching = 0;
+    int max_search_depth = 0;
+
+    int node_objects_created = 0;
+    int node_objects_reused = 0;
+    int node_buffer_growth_events = 0;
+    int scratch_capacity_growth_events = 0;
 };
 
 struct RootSearchOutput {

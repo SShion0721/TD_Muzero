@@ -1,6 +1,7 @@
 #pragma once
 #include <random>
 #include <string>
+#include <utility>
 #include <vector>
 #include "tdmz/core/action.hpp"
 #include "tdmz/mcts/mcts_config.hpp"
@@ -24,6 +25,20 @@ public:
 private:
     MCTSConfig cfg_;
     std::mt19937_64 rng_;
+    NodePool node_pool_;
+
+    std::vector<uint8_t> seen_actions_scratch_;
+    std::vector<std::vector<float>> initial_observations_scratch_;
+    EvalInput recurrent_input_scratch_;
+    std::vector<int> search_path_scratch_;
+    std::vector<std::pair<float, int>> scored_actions_scratch_;
+    std::vector<int> topk_actions_scratch_;
+    std::vector<float> priors_scratch_;
+    std::vector<double> root_noise_scratch_;
+
+    int scratch_capacity_growth_events_ = 0;
+    int node_buffer_growth_events_ = 0;
+    int max_search_depth_ = 0;
 
     int expand_node(
         NodePool& pool,
@@ -63,15 +78,15 @@ private:
         MinMaxStats& minmax
     ) const;
 
-    std::vector<int> select_topk_candidates(
+    const std::vector<int>& select_topk_candidates(
         const std::vector<float>& policy_logits,
         int k
-    ) const;
+    );
 
-    std::vector<float> softmax_over_actions(
+    const std::vector<float>& softmax_over_actions(
         const std::vector<float>& logits,
         const std::vector<int>& actions
-    ) const;
+    );
 };
 
 } // namespace tdmz

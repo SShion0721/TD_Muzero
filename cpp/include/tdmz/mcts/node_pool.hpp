@@ -15,23 +15,33 @@ public:
     }
 
     int allocate() {
-        if (static_cast<int>(nodes_.size()) >= max_nodes_) {
+        if (active_size_ >= max_nodes_) {
             throw std::runtime_error("NodePool exhausted");
         }
-        nodes_.push_back(Node{});
-        return static_cast<int>(nodes_.size()) - 1;
+
+        const int id = active_size_++;
+        if (id < static_cast<int>(nodes_.size())) {
+            nodes_[static_cast<size_t>(id)].reset_for_reuse();
+            ++reused_nodes_this_search_;
+        } else {
+            nodes_.push_back(Node{});
+            ++new_nodes_this_search_;
+        }
+        return id;
     }
 
     Node& get(int id) {
-        return nodes_.at(static_cast<size_t>(id));
+        validate_active_id(id);
+        return nodes_[static_cast<size_t>(id)];
     }
 
     const Node& get(int id) const {
-        return nodes_.at(static_cast<size_t>(id));
+        validate_active_id(id);
+        return nodes_[static_cast<size_t>(id)];
     }
 
     int size() const {
-        return static_cast<int>(nodes_.size());
+        return active_size_;
     }
 
     int capacity() const {
@@ -39,15 +49,38 @@ public:
     }
 
     int remaining() const {
-        return max_nodes_ - size();
+        return max_nodes_ - active_size_;
+    }
+
+    int retained_node_count() const {
+        return static_cast<int>(nodes_.size());
+    }
+
+    int new_nodes_this_search() const {
+        return new_nodes_this_search_;
+    }
+
+    int reused_nodes_this_search() const {
+        return reused_nodes_this_search_;
     }
 
     void clear() {
-        nodes_.clear();
+        active_size_ = 0;
+        new_nodes_this_search_ = 0;
+        reused_nodes_this_search_ = 0;
     }
 
 private:
+    void validate_active_id(int id) const {
+        if (id < 0 || id >= active_size_) {
+            throw std::out_of_range("NodePool node id is outside the active search");
+        }
+    }
+
     int max_nodes_;
+    int active_size_ = 0;
+    int new_nodes_this_search_ = 0;
+    int reused_nodes_this_search_ = 0;
     std::vector<Node> nodes_;
 };
 
