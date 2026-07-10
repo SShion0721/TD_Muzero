@@ -4,10 +4,12 @@
 #include "tdmz/mcts/dummy_network.hpp"
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <numeric>
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 using namespace tdmz;
 
@@ -17,6 +19,41 @@ static void check_true(bool ok, const char* expr, int line) {
     }
 }
 #define CHECK_TRUE(x) check_true(static_cast<bool>(x), #x, __LINE__)
+
+static void check_close(float actual, float expected, float tolerance, const char* label) {
+    if (std::fabs(actual - expected) > tolerance) {
+        throw std::runtime_error(
+            std::string("float mismatch for ") + label
+            + ": actual=" + std::to_string(actual)
+            + " expected=" + std::to_string(expected));
+    }
+}
+
+template <typename Fn>
+static void check_throws_runtime(Fn&& fn, const char* label) {
+    bool threw = false;
+    try {
+        fn();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    if (!threw) throw std::runtime_error(std::string("expected runtime_error: ") + label);
+}
+
+template <typename Fn>
+static void check_throws_invalid(Fn&& fn, const char* label) {
+    bool threw = false;
+    try {
+        fn();
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    if (!threw) throw std::runtime_error(std::string("expected invalid_argument: ") + label);
+}
+
+static EvalOutput make_eval_output(float value = 0.0f, float reward = 0.0f) {
+    return {{value}, {reward}, {std::vector<float>(kActionSpaceSize, 0.0f)}};
+}
 
 static RootSearchOutput run_search(MCTSConfig cfg) {
     TDEngine env(11, 11, 0);
@@ -46,13 +83,93 @@ public:
     }
 };
 
+class CountingNetwork : public INetworkEvaluator {
+public:
+    EvalOutput initial_inference(const std::vector<std::vector<float>>&) override {
+        ++initial_calls;
+        return make_eval_output();
+    }
+
+    EvalOutput recurrent_inference(const EvalInput&) override {
+        ++recurrent_calls;
+        return make_eval_output();
+    }
+
+    int initial_calls = 0;
+    int recurrent_calls = 0;
+};
+
+class FixedReturnNetwork : public INetworkEvaluator {
+public:
+    FixedReturnNetwork(float value, float reward) : value_(value), reward_(reward) {}
+
+    EvalOutput initial_inference(const std::vector<std::vector<float>>&) override {
+        return make_eval_output();
+    }
+
+    EvalOutput recurrent_inference(const EvalInput&) override {
+        return make_eval_output(value_, reward_);
+    }
+
+private:
+    float value_;
+    float reward_;
+};
+
+enum class EvalStage { Initial, Recurrent };
+enum class EvalField { Value, Reward, Policy };
+
+class NonFiniteNetwork : public INetworkEvaluator {
+public:
+    NonFiniteNetwork(EvalStage stage, EvalField field, float bad_value)
+        : stage_(stage), field_(field), bad_value_(bad_value) {}
+
+    EvalOutput initial_inference(const std::vector<std::vector<float>>&) override {
+        return make(stage_ == EvalStage::Initial);
+    }
+
+    EvalOutput recurrent_inference(const EvalInput&) override {
+        return make(stage_ == EvalStage::Recurrent);
+    }
+
+private:
+    EvalOutput make(bool inject) const {
+        EvalOutput output = make_eval_output();
+        if (!inject) return output;
+        switch (field_) {
+            case EvalField::Value:
+                output.values[0] = bad_value_;
+                break;
+            case EvalField::Reward:
+                output.rewards[0] = bad_value_;
+                break;
+            case EvalField::Policy:
+                output.policy_logits[0][17] = bad_value_;
+                break;
+        }
+        return output;
+    }
+
+    EvalStage stage_;
+    EvalField field_;
+    float bad_value_;
+};
+
 void test_node_pool() {
+    check_throws_invalid([] { NodePool invalid(0); }, "zero node capacity");
+
     NodePool pool(2);
+    CHECK_TRUE(pool.capacity() == 2);
+    CHECK_TRUE(pool.remaining() == 2);
     CHECK_TRUE(pool.allocate() == 0);
+    CHECK_TRUE(pool.remaining() == 1);
     CHECK_TRUE(pool.allocate() == 1);
-    bool threw = false;
-    try { pool.allocate(); } catch (const std::runtime_error&) { threw = true; }
-    CHECK_TRUE(threw);
+    CHECK_TRUE(pool.remaining() == 0);
+    check_throws_runtime([&] { (void)pool.allocate(); }, "node pool exhausted");
+
+    pool.clear();
+    CHECK_TRUE(pool.size() == 0);
+    CHECK_TRUE(pool.remaining() == 2);
 }
 
 void test_root_policy_and_legality() {
@@ -130,14 +247,7 @@ void test_root_noise_changes_priors_and_is_reproducible() {
 void test_multiplayer_mode_is_rejected() {
     MCTSConfig cfg;
     cfg.single_player = false;
-    bool threw = false;
-    try {
-        MCTS mcts(cfg);
-        (void)mcts;
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    CHECK_TRUE(threw);
+    check_throws_invalid([&] { MCTS mcts(cfg); }, "multiplayer mode");
 }
 
 void test_invalid_network_output_is_rejected() {
@@ -145,14 +255,78 @@ void test_invalid_network_output_is_rejected() {
     InvalidPolicyNetwork net;
     MCTSConfig cfg;
     MCTS mcts(cfg);
+    check_throws_runtime(
+        [&] { (void)mcts.search_single(net, make_observation_v1(env), env.legal_actions()); },
+        "invalid policy width");
+}
 
-    bool threw = false;
-    try {
-        (void)mcts.search_single(net, make_observation_v1(env), env.legal_actions());
-    } catch (const std::runtime_error&) {
-        threw = true;
+void test_non_finite_initial_and_recurrent_outputs_are_rejected() {
+    const float bad_values[] = {
+        std::numeric_limits<float>::quiet_NaN(),
+        std::numeric_limits<float>::infinity(),
+    };
+    const EvalStage stages[] = {EvalStage::Initial, EvalStage::Recurrent};
+    const EvalField fields[] = {EvalField::Value, EvalField::Reward, EvalField::Policy};
+
+    MCTSConfig cfg;
+    cfg.num_simulations = 1;
+    cfg.latent_top_k = 1;
+    cfg.max_nodes = 3;
+
+    for (EvalStage stage : stages) {
+        for (EvalField field : fields) {
+            for (float bad_value : bad_values) {
+                NonFiniteNetwork net(stage, field, bad_value);
+                MCTS mcts(cfg);
+                check_throws_runtime(
+                    [&] { (void)mcts.search_single(net, {}, {0}); },
+                    "non-finite evaluator output");
+            }
+        }
     }
-    CHECK_TRUE(threw);
+}
+
+void test_node_capacity_is_checked_before_network_inference() {
+    MCTSConfig cfg;
+    cfg.num_simulations = 2;
+    cfg.latent_top_k = 3;
+    cfg.max_nodes = 8; // Exact requirement is 1 root + 2 root children + 2*3 latent children = 9.
+
+    CountingNetwork too_small_net;
+    MCTS too_small(cfg);
+    check_throws_invalid(
+        [&] { (void)too_small.search_single(too_small_net, {}, {0, 1}); },
+        "insufficient MCTS max_nodes");
+    CHECK_TRUE(too_small_net.initial_calls == 0);
+    CHECK_TRUE(too_small_net.recurrent_calls == 0);
+
+    cfg.max_nodes = 9;
+    CountingNetwork exact_net;
+    MCTS exact(cfg);
+    RootSearchOutput output = exact.search_single(exact_net, {}, {0, 1});
+    CHECK_TRUE(output.debug.total_nodes == 9);
+    CHECK_TRUE(exact_net.initial_calls == 1);
+    CHECK_TRUE(exact_net.recurrent_calls == 2);
+}
+
+void test_single_player_backup_preserves_reward_and_value_signs() {
+    MCTSConfig cfg;
+    cfg.num_simulations = 1;
+    cfg.latent_top_k = 1;
+    cfg.max_nodes = 3;
+    cfg.discount = 0.8f;
+
+    const float recurrent_value = -0.5f;
+    const float transition_reward = 0.25f;
+    FixedReturnNetwork net(recurrent_value, transition_reward);
+    MCTS mcts(cfg);
+    RootSearchOutput output = mcts.search_single(net, {}, {7});
+
+    const float expected_root_value = transition_reward + cfg.discount * recurrent_value;
+    check_close(output.root_value, expected_root_value, 1e-6f, "single-player backup");
+    CHECK_TRUE(output.root_value < 0.0f);
+    CHECK_TRUE(output.visit_counts.size() == 1);
+    CHECK_TRUE(output.visit_counts[0] == 1);
 }
 
 void test_duplicate_root_actions_are_rejected() {
@@ -163,13 +337,9 @@ void test_duplicate_root_actions_are_rejected() {
     auto legal = env.legal_actions();
     legal.push_back(legal.front());
 
-    bool threw = false;
-    try {
-        (void)mcts.search_single(net, make_observation_v1(env), legal);
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    CHECK_TRUE(threw);
+    check_throws_invalid(
+        [&] { (void)mcts.search_single(net, make_observation_v1(env), legal); },
+        "duplicate root actions");
 }
 
 void test_minmax() {
@@ -187,6 +357,9 @@ int main() {
     test_root_noise_changes_priors_and_is_reproducible();
     test_multiplayer_mode_is_rejected();
     test_invalid_network_output_is_rejected();
+    test_non_finite_initial_and_recurrent_outputs_are_rejected();
+    test_node_capacity_is_checked_before_network_inference();
+    test_single_player_backup_preserves_reward_and_value_signs();
     test_duplicate_root_actions_are_rejected();
     test_minmax();
     std::cout << "All MCTS tests passed!" << std::endl;
