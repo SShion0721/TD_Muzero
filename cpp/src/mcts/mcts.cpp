@@ -1,24 +1,80 @@
 #include "tdmz/mcts/mcts.hpp"
-#include <cmath>
-#include <numeric>
 #include <algorithm>
+#include <cmath>
+#include <limits>
+#include <numeric>
+#include <stdexcept>
+#include <vector>
 
 namespace tdmz {
 
-MCTS::MCTS(MCTSConfig cfg) : cfg_(cfg) {}
+MCTS::MCTS(MCTSConfig cfg) : cfg_(cfg), rng_(cfg.random_seed) {
+    if (cfg_.num_simulations <= 0) {
+        throw std::invalid_argument("MCTS num_simulations must be positive");
+    }
+    if (!std::isfinite(cfg_.discount) || cfg_.discount < 0.0f || cfg_.discount > 1.0f) {
+        throw std::invalid_argument("MCTS discount must be finite and in [0, 1]");
+    }
+    if (!std::isfinite(cfg_.pb_c_base) || cfg_.pb_c_base <= 0.0f) {
+        throw std::invalid_argument("MCTS pb_c_base must be finite and positive");
+    }
+    if (!std::isfinite(cfg_.pb_c_init) || cfg_.pb_c_init < 0.0f) {
+        throw std::invalid_argument("MCTS pb_c_init must be finite and non-negative");
+    }
+    if (cfg_.latent_top_k <= 0) {
+        throw std::invalid_argument("MCTS latent_top_k must be positive");
+    }
+    if (cfg_.max_nodes <= 1) {
+        throw std::invalid_argument("MCTS max_nodes must be greater than one");
+    }
+    if (!std::isfinite(cfg_.value_delta_max) || cfg_.value_delta_max < 0.0f) {
+        throw std::invalid_argument("MCTS value_delta_max must be finite and non-negative");
+    }
+    if (!cfg_.single_player) {
+        throw std::invalid_argument("MCTS multiplayer backup semantics are not implemented");
+    }
+    if (cfg_.add_root_noise) {
+        if (!std::isfinite(cfg_.root_dirichlet_alpha) || cfg_.root_dirichlet_alpha <= 0.0f) {
+            throw std::invalid_argument("MCTS root_dirichlet_alpha must be finite and positive");
+        }
+        if (!std::isfinite(cfg_.root_noise_weight) ||
+            cfg_.root_noise_weight < 0.0f || cfg_.root_noise_weight > 1.0f) {
+            throw std::invalid_argument("MCTS root_noise_weight must be finite and in [0, 1]");
+        }
+    }
+}
 
 RootSearchOutput MCTS::search_single(
     INetworkEvaluator& net,
     const std::vector<float>& observation,
     const std::vector<int>& legal_actions
 ) {
+    if (legal_actions.empty()) {
+        throw std::invalid_argument("MCTS requires at least one legal root action");
+    }
+
+    std::vector<uint8_t> seen(kActionSpaceSize, 0);
+    for (int action : legal_actions) {
+        if (action < 0 || action >= kActionSpaceSize) {
+            throw std::invalid_argument("MCTS legal root action is out of range");
+        }
+        if (seen[action]) {
+            throw std::invalid_argument("MCTS legal root actions contain duplicates");
+        }
+        seen[action] = 1;
+    }
+
     NodePool pool(cfg_.max_nodes);
     MinMaxStats minmax(cfg_.value_delta_max);
 
     int root_id = pool.allocate();
 
     auto init_out = net.initial_inference({observation});
+    validate_eval_output(init_out, 1, "initial inference");
     expand_node(pool, root_id, -1, -1, 0.0f, 1.0f, legal_actions, init_out.policy_logits[0]);
+    if (cfg_.add_root_noise && cfg_.root_noise_weight > 0.0f) {
+        apply_root_noise(pool, root_id);
+    }
 
     SearchDebugStats debug;
     debug.max_root_branching = static_cast<int>(legal_actions.size());
@@ -29,6 +85,9 @@ RootSearchOutput MCTS::search_single(
 
         while (pool.get(current).expanded()) {
             int next_child = select_child(pool, current, minmax);
+            if (next_child < 0) {
+                throw std::runtime_error("MCTS failed to select a child from an expanded node");
+            }
             current = pool.get(current).children[next_child];
             search_path.push_back(current);
         }
@@ -42,6 +101,7 @@ RootSearchOutput MCTS::search_single(
         eval_in.actions = {leaf.action_from_parent};
 
         auto rec_out = net.recurrent_inference(eval_in);
+        validate_eval_output(rec_out, 1, "recurrent inference");
 
         float value = rec_out.values[0];
         float reward = rec_out.rewards[0];
@@ -65,13 +125,16 @@ RootSearchOutput MCTS::search_single(
 
     const Node& root_node = pool.get(root_id);
     out.root_actions = root_node.actions;
+    out.root_priors.resize(root_node.actions.size());
     out.visit_counts.resize(root_node.actions.size());
     out.policy_full.assign(kActionSpaceSize, 0.0f);
 
     float total_visits = 0.0f;
     for (int i = 0; i < static_cast<int>(root_node.actions.size()); ++i) {
         int child_id = root_node.children[i];
-        int vc = pool.get(child_id).visit_count;
+        const Node& child = pool.get(child_id);
+        int vc = child.visit_count;
+        out.root_priors[i] = child.prior;
         out.visit_counts[i] = vc;
         total_visits += static_cast<float>(vc);
         if (vc > best_visit_count) {
@@ -124,6 +187,62 @@ int MCTS::expand_node(
     }
 
     return node_id;
+}
+
+void MCTS::apply_root_noise(NodePool& pool, int root_id) {
+    Node& root = pool.get(root_id);
+    if (root.children.empty()) return;
+
+    std::gamma_distribution<double> gamma(
+        static_cast<double>(cfg_.root_dirichlet_alpha), 1.0);
+    std::vector<double> noise(root.children.size(), 0.0);
+    double sum = 0.0;
+    for (double& value : noise) {
+        value = gamma(rng_);
+        sum += value;
+    }
+
+    if (!std::isfinite(sum) || sum <= 0.0) {
+        const double uniform = 1.0 / static_cast<double>(noise.size());
+        std::fill(noise.begin(), noise.end(), uniform);
+    } else {
+        for (double& value : noise) value /= sum;
+    }
+
+    const float keep = 1.0f - cfg_.root_noise_weight;
+    for (size_t i = 0; i < root.children.size(); ++i) {
+        Node& child = pool.get(root.children[i]);
+        child.prior = keep * child.prior +
+                      cfg_.root_noise_weight * static_cast<float>(noise[i]);
+    }
+}
+
+void MCTS::validate_eval_output(
+    const EvalOutput& output,
+    int expected_batch_size,
+    const char* stage
+) const {
+    if (expected_batch_size <= 0 ||
+        output.values.size() != static_cast<size_t>(expected_batch_size) ||
+        output.rewards.size() != static_cast<size_t>(expected_batch_size) ||
+        output.policy_logits.size() != static_cast<size_t>(expected_batch_size)) {
+        throw std::runtime_error(std::string("Invalid ") + stage + " batch dimensions");
+    }
+
+    for (int i = 0; i < expected_batch_size; ++i) {
+        if (!std::isfinite(output.values[i]) || !std::isfinite(output.rewards[i])) {
+            throw std::runtime_error(std::string("Non-finite value or reward from ") + stage);
+        }
+        const auto& logits = output.policy_logits[i];
+        if (logits.size() != kActionSpaceSize) {
+            throw std::runtime_error(std::string("Invalid policy size from ") + stage);
+        }
+        for (float logit : logits) {
+            if (!std::isfinite(logit)) {
+                throw std::runtime_error(std::string("Non-finite policy logit from ") + stage);
+            }
+        }
+    }
 }
 
 int MCTS::select_child(
@@ -196,10 +315,12 @@ std::vector<int> MCTS::select_topk_candidates(
     }
 
     int actual_k = std::min(k, static_cast<int>(scored_actions.size()));
-    std::partial_sort(scored_actions.begin(), scored_actions.begin() + actual_k, scored_actions.end(),
-                      [](const auto& a, const auto& b) {
-                          return a.first > b.first;
-                      });
+    std::partial_sort(
+        scored_actions.begin(), scored_actions.begin() + actual_k, scored_actions.end(),
+        [](const auto& a, const auto& b) {
+            if (a.first != b.first) return a.first > b.first;
+            return a.second < b.second;
+        });
 
     std::vector<int> topk;
     topk.reserve(actual_k);
@@ -216,21 +337,27 @@ std::vector<float> MCTS::softmax_over_actions(
     if (actions.empty()) return {};
 
     float max_logit = -std::numeric_limits<float>::infinity();
-    for (int a : actions) {
-        max_logit = std::max(max_logit, logits[a]);
+    for (int action : actions) {
+        if (action < 0 || action >= static_cast<int>(logits.size())) {
+            throw std::runtime_error("MCTS candidate action is outside policy logits");
+        }
+        max_logit = std::max(max_logit, logits[action]);
     }
 
     std::vector<float> exps;
     exps.reserve(actions.size());
-    float sum_exp = 0.0f;
-    for (int a : actions) {
-        float e = std::exp(logits[a] - max_logit);
-        exps.push_back(e);
-        sum_exp += e;
+    double sum_exp = 0.0;
+    for (int action : actions) {
+        float value = std::exp(logits[action] - max_logit);
+        exps.push_back(value);
+        sum_exp += value;
     }
 
-    for (float& e : exps) {
-        e /= sum_exp;
+    if (!std::isfinite(sum_exp) || sum_exp <= 0.0) {
+        throw std::runtime_error("MCTS policy softmax normalization failed");
+    }
+    for (float& value : exps) {
+        value = static_cast<float>(value / sum_exp);
     }
 
     return exps;
