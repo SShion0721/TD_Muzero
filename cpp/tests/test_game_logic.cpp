@@ -151,6 +151,23 @@ void test_slow_tower_applies_slow() {
     CHECK_TRUE(slowed);
 }
 
+void test_towers_do_not_retarget_dead_enemy() {
+    TDEngine env(11, 11, 0);
+    int first_basic = encode_action(Action{ActionType::BuildBasic, 4, 4, 1});
+    int second_basic = encode_action(Action{ActionType::BuildBasic, 4, 6, 1});
+
+    auto first = env.step_action(first_basic);
+    auto second = env.step_action(second_basic);
+
+    CHECK_TRUE(!first.done);
+    CHECK_TRUE(!second.done);
+    CHECK_TRUE(std::abs(second.reward - 5.0f) < 1e-5f);
+    CHECK_TRUE(env.towers().size() == 2);
+    CHECK_TRUE(env.towers()[0].cooldown > 0.0f);
+    CHECK_TRUE(env.towers()[1].cooldown <= 0.0f);
+    CHECK_TRUE(env.enemies().size() == 1);
+}
+
 void test_build_legality_basics() {
     TDEngine env(11, 11, 0);
     CHECK_TRUE(!env.can_place_tower(env.spawn_x(), env.spawn_y(), TowerType::Basic));
@@ -195,6 +212,7 @@ int main() {
     test_base_takes_damage_without_towers();
     test_sniper_shoots_and_enters_cooldown();
     test_slow_tower_applies_slow();
+    test_towers_do_not_retarget_dead_enemy();
     test_build_legality_basics();
     test_placeable_and_legal_actions_are_cached();
     std::cout << "Game logic tests passed!" << std::endl;
