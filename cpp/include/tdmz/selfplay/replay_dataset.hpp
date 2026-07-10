@@ -99,7 +99,11 @@ public:
     const ReplayIndexMetadata& index_metadata() const { return index_metadata_; }
     bool transition_indexed() const { return transition_indexed_; }
     uint32_t replay_format_version() const { return replay_format_version_; }
+    int observation_size() const { return observation_size_; }
+    int policy_size() const { return policy_size_; }
+    int legal_mask_size() const { return legal_mask_size_; }
 
+    ReplaySampleRef locate_game(size_t global_game_index) const;
     GameHistory read_game(size_t global_game_index);
     ReplaySampleRef sample_ref(uint64_t random_u64);
     TrajectoryStep sample_step(uint64_t random_u64);
@@ -132,6 +136,9 @@ private:
     bool has_index_metadata_ = false;
     bool transition_indexed_ = false;
     uint32_t replay_format_version_ = 0;
+    int observation_size_ = 0;
+    int policy_size_ = 0;
+    int legal_mask_size_ = 0;
     uint64_t game_read_count_ = 0;
 };
 
