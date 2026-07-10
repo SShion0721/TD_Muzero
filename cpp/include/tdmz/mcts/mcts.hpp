@@ -1,4 +1,6 @@
 #pragma once
+#include <random>
+#include <string>
 #include <vector>
 #include "tdmz/core/action.hpp"
 #include "tdmz/mcts/mcts_config.hpp"
@@ -21,6 +23,7 @@ public:
 
 private:
     MCTSConfig cfg_;
+    std::mt19937_64 rng_;
 
     int expand_node(
         NodePool& pool,
@@ -32,6 +35,14 @@ private:
         const std::vector<int>& candidate_actions,
         const std::vector<float>& policy_logits
     );
+
+    void apply_root_noise(NodePool& pool, int root_id);
+
+    void validate_eval_output(
+        const EvalOutput& output,
+        int expected_batch_size,
+        const char* stage
+    ) const;
 
     int select_child(
         const NodePool& pool,
