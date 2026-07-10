@@ -18,6 +18,11 @@ struct MCTSConfig {
     int latent_top_k = 32;
     int max_nodes = 4096;
 
+    // 1 preserves sequential simulation scheduling exactly. Values greater
+    // than one collect unique leaves with temporary virtual visits and submit
+    // one recurrent inference call per collected group.
+    int recurrent_batch_size = 1;
+
     float value_delta_max = 0.01f;
 
     // Only single-player backup semantics are implemented at present.
