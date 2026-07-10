@@ -17,9 +17,10 @@ set(TDMZ_CORE_SOURCES
     src/core/tower.cpp
     src/mcts/mcts.cpp
     src/persistence/checkpoint_manifest.cpp
-    src/selfplay/replay_dataset.cpp
+    src/selfplay/replay_dataset_v2.cpp
     src/selfplay/selfplay_runner.cpp
     src/selfplay/trajectory_writer.cpp
+    src/selfplay/transition_shard.cpp
     src/balance/attack_budget.cpp
     src/balance/budgeted_wave_generator.cpp
     src/balance/defense_capacity.cpp
@@ -75,7 +76,7 @@ tdmz_add_core_app(bench_replay_loader apps/bench_replay_loader.cpp)
 tdmz_add_core_app(bench_batch_sampler apps/bench_batch_sampler.cpp)
 tdmz_add_core_app(bench_mcts apps/bench_mcts.cpp)
 tdmz_add_core_app(generate_selfplay_dummy apps/generate_selfplay_dummy.cpp)
-tdmz_add_core_app(generate_selfplay_shards apps/generate_selfplay_shards.cpp)
+tdmz_add_core_app(generate_selfplay_shards apps/generate_selfplay_shards_v2.cpp)
 
 if(WIN32 AND TDMZ_BUILD_ENGINE_DEBUG_GUI)
     add_executable(tdmz_engine_debug_gui WIN32 apps/engine_debug_gui_win32.cpp)
