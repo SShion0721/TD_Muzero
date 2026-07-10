@@ -1,0 +1,45 @@
+name: C++ Core CI
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "cpp/**"
+      - ".github/workflows/cpp-ci.yml"
+  pull_request:
+    branches: [master]
+    paths:
+      - "cpp/**"
+      - ".github/workflows/cpp-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.os }} / C++17 core
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: >-
+          cmake
+          -S cpp
+          -B cpp/build-ci
+          -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DTDMZ_ENABLE_TORCH=OFF
+
+      - name: Build
+        run: cmake --build cpp/build-ci --parallel
+
+      - name: Test
+        run: ctest --test-dir cpp/build-ci --output-on-failure
