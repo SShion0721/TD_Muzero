@@ -3,9 +3,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
-#include <numeric>
 #include <stdexcept>
-#include <vector>
 
 namespace tdmz {
 
@@ -25,7 +23,8 @@ uint64_t required_nodes_for_search(
 
 } // namespace
 
-MCTS::MCTS(MCTSConfig cfg) : cfg_(cfg), rng_(cfg.random_seed) {
+MCTS::MCTS(MCTSConfig cfg)
+    : cfg_(cfg), rng_(cfg.random_seed), node_pool_(cfg.max_nodes) {
     if (cfg_.num_simulations <= 0) {
         throw std::invalid_argument("MCTS num_simulations must be positive");
     }
@@ -54,11 +53,25 @@ MCTS::MCTS(MCTSConfig cfg) : cfg_(cfg), rng_(cfg.random_seed) {
         if (!std::isfinite(cfg_.root_dirichlet_alpha) || cfg_.root_dirichlet_alpha <= 0.0f) {
             throw std::invalid_argument("MCTS root_dirichlet_alpha must be finite and positive");
         }
-        if (!std::isfinite(cfg_.root_noise_weight) ||
-            cfg_.root_noise_weight < 0.0f || cfg_.root_noise_weight > 1.0f) {
+        if (!std::isfinite(cfg_.root_noise_weight)
+            || cfg_.root_noise_weight < 0.0f
+            || cfg_.root_noise_weight > 1.0f) {
             throw std::invalid_argument("MCTS root_noise_weight must be finite and in [0, 1]");
         }
     }
+
+    seen_actions_scratch_.assign(kActionSpaceSize, 0u);
+    initial_observations_scratch_.resize(1);
+    recurrent_input_scratch_.batch_size = 1;
+    recurrent_input_scratch_.parent_node_ids.resize(1);
+    recurrent_input_scratch_.target_node_ids.resize(1);
+    recurrent_input_scratch_.actions.resize(1);
+
+    search_path_scratch_.reserve(static_cast<size_t>(cfg_.num_simulations) + 1u);
+    scored_actions_scratch_.reserve(kActionSpaceSize);
+    topk_actions_scratch_.reserve(static_cast<size_t>(std::min(cfg_.latent_top_k, kActionSpaceSize)));
+    priors_scratch_.reserve(kActionSpaceSize);
+    root_noise_scratch_.reserve(kActionSpaceSize);
 }
 
 RootSearchOutput MCTS::search_single(
@@ -70,15 +83,15 @@ RootSearchOutput MCTS::search_single(
         throw std::invalid_argument("MCTS requires at least one legal root action");
     }
 
-    std::vector<uint8_t> seen(kActionSpaceSize, 0);
+    std::fill(seen_actions_scratch_.begin(), seen_actions_scratch_.end(), 0u);
     for (int action : legal_actions) {
         if (action < 0 || action >= kActionSpaceSize) {
             throw std::invalid_argument("MCTS legal root action is out of range");
         }
-        if (seen[action]) {
+        if (seen_actions_scratch_[static_cast<size_t>(action)] != 0u) {
             throw std::invalid_argument("MCTS legal root actions contain duplicates");
         }
-        seen[action] = 1;
+        seen_actions_scratch_[static_cast<size_t>(action)] = 1u;
     }
 
     const uint64_t required_nodes = required_nodes_for_search(
@@ -88,94 +101,112 @@ RootSearchOutput MCTS::search_single(
             "MCTS max_nodes is too small for the configured simulations and branching");
     }
 
-    NodePool pool(cfg_.max_nodes);
+    node_pool_.clear();
+    scratch_capacity_growth_events_ = 0;
+    node_buffer_growth_events_ = 0;
+    max_search_depth_ = 0;
     MinMaxStats minmax(cfg_.value_delta_max);
 
-    int root_id = pool.allocate();
+    auto& initial_observation = initial_observations_scratch_[0];
+    if (initial_observation.capacity() < observation.size()) {
+        ++scratch_capacity_growth_events_;
+    }
+    initial_observation.assign(observation.begin(), observation.end());
 
-    auto init_out = net.initial_inference({observation});
+    const int root_id = node_pool_.allocate();
+    EvalOutput init_out = net.initial_inference(initial_observations_scratch_);
     validate_eval_output(init_out, 1, "initial inference");
-    expand_node(pool, root_id, -1, -1, 0.0f, 1.0f, legal_actions, init_out.policy_logits[0]);
+    expand_node(
+        node_pool_, root_id, -1, -1, 0.0f, 1.0f,
+        legal_actions, init_out.policy_logits[0]);
     if (cfg_.add_root_noise && cfg_.root_noise_weight > 0.0f) {
-        apply_root_noise(pool, root_id);
+        apply_root_noise(node_pool_, root_id);
     }
 
     SearchDebugStats debug;
     debug.max_root_branching = static_cast<int>(legal_actions.size());
 
-    for (int sim = 0; sim < cfg_.num_simulations; ++sim) {
+    for (int simulation = 0; simulation < cfg_.num_simulations; ++simulation) {
         int current = root_id;
-        std::vector<int> search_path = {current};
+        search_path_scratch_.clear();
+        search_path_scratch_.push_back(current);
 
-        while (pool.get(current).expanded()) {
-            int next_child = select_child(pool, current, minmax);
+        while (node_pool_.get(current).expanded()) {
+            const int next_child = select_child(node_pool_, current, minmax);
             if (next_child < 0) {
                 throw std::runtime_error("MCTS failed to select a child from an expanded node");
             }
-            current = pool.get(current).children[next_child];
-            search_path.push_back(current);
+            current = node_pool_.get(current).children[static_cast<size_t>(next_child)];
+            if (search_path_scratch_.size() == search_path_scratch_.capacity()) {
+                ++scratch_capacity_growth_events_;
+            }
+            search_path_scratch_.push_back(current);
         }
+        max_search_depth_ = std::max(
+            max_search_depth_, static_cast<int>(search_path_scratch_.size()));
 
-        Node& leaf = pool.get(current);
+        Node& leaf = node_pool_.get(current);
+        recurrent_input_scratch_.parent_node_ids[0] = leaf.parent;
+        recurrent_input_scratch_.target_node_ids[0] = current;
+        recurrent_input_scratch_.actions[0] = leaf.action_from_parent;
 
-        EvalInput eval_in;
-        eval_in.batch_size = 1;
-        eval_in.parent_node_ids = {leaf.parent};
-        eval_in.target_node_ids = {current};
-        eval_in.actions = {leaf.action_from_parent};
+        EvalOutput recurrent_output = net.recurrent_inference(recurrent_input_scratch_);
+        validate_eval_output(recurrent_output, 1, "recurrent inference");
 
-        auto rec_out = net.recurrent_inference(eval_in);
-        validate_eval_output(rec_out, 1, "recurrent inference");
-
-        float value = rec_out.values[0];
-        float reward = rec_out.rewards[0];
-        auto topk_actions = select_topk_candidates(rec_out.policy_logits[0], cfg_.latent_top_k);
+        const float value = recurrent_output.values[0];
+        const float reward = recurrent_output.rewards[0];
+        const auto& topk_actions = select_topk_candidates(
+            recurrent_output.policy_logits[0], cfg_.latent_top_k);
 
         debug.max_latent_branching = std::max(
             debug.max_latent_branching, static_cast<int>(topk_actions.size()));
-
-        expand_node(pool, current, leaf.parent, leaf.action_from_parent, reward, leaf.prior, topk_actions, rec_out.policy_logits[0]);
-        backup(pool, search_path, value, minmax);
+        expand_node(
+            node_pool_, current, leaf.parent, leaf.action_from_parent,
+            reward, leaf.prior, topk_actions, recurrent_output.policy_logits[0]);
+        backup(node_pool_, search_path_scratch_, value, minmax);
     }
 
-    debug.total_nodes = pool.size();
+    debug.total_nodes = node_pool_.size();
+    debug.max_search_depth = max_search_depth_;
+    debug.node_objects_created = node_pool_.new_nodes_this_search();
+    debug.node_objects_reused = node_pool_.reused_nodes_this_search();
+    debug.node_buffer_growth_events = node_buffer_growth_events_;
+    debug.scratch_capacity_growth_events = scratch_capacity_growth_events_;
 
-    RootSearchOutput out;
-    out.root_value = pool.get(root_id).value();
-    out.debug = debug;
+    RootSearchOutput output;
+    output.root_value = node_pool_.get(root_id).value();
+    output.debug = debug;
 
     int best_action = -1;
     int best_visit_count = -1;
-
-    const Node& root_node = pool.get(root_id);
-    out.root_actions = root_node.actions;
-    out.root_priors.resize(root_node.actions.size());
-    out.visit_counts.resize(root_node.actions.size());
-    out.policy_full.assign(kActionSpaceSize, 0.0f);
+    const Node& root_node = node_pool_.get(root_id);
+    output.root_actions = root_node.actions;
+    output.root_priors.resize(root_node.actions.size());
+    output.visit_counts.resize(root_node.actions.size());
+    output.policy_full.assign(kActionSpaceSize, 0.0f);
 
     float total_visits = 0.0f;
     for (int i = 0; i < static_cast<int>(root_node.actions.size()); ++i) {
-        int child_id = root_node.children[i];
-        const Node& child = pool.get(child_id);
-        int vc = child.visit_count;
-        out.root_priors[i] = child.prior;
-        out.visit_counts[i] = vc;
-        total_visits += static_cast<float>(vc);
-        if (vc > best_visit_count) {
-            best_visit_count = vc;
-            best_action = root_node.actions[i];
+        const int child_id = root_node.children[static_cast<size_t>(i)];
+        const Node& child = node_pool_.get(child_id);
+        const int visit_count = child.visit_count;
+        output.root_priors[static_cast<size_t>(i)] = child.prior;
+        output.visit_counts[static_cast<size_t>(i)] = visit_count;
+        total_visits += static_cast<float>(visit_count);
+        if (visit_count > best_visit_count) {
+            best_visit_count = visit_count;
+            best_action = root_node.actions[static_cast<size_t>(i)];
         }
     }
 
-    out.action = best_action;
-
+    output.action = best_action;
     if (total_visits > 0.0f) {
         for (int i = 0; i < static_cast<int>(root_node.actions.size()); ++i) {
-            out.policy_full[root_node.actions[i]] = out.visit_counts[i] / total_visits;
+            output.policy_full[static_cast<size_t>(root_node.actions[static_cast<size_t>(i)])]
+                = output.visit_counts[static_cast<size_t>(i)] / total_visits;
         }
     }
-
-    return out;
+    return output;
 }
 
 int MCTS::expand_node(
@@ -198,22 +229,24 @@ int MCTS::expand_node(
     node.reward = reward;
     node.prior = prior;
 
-    node.actions = candidate_actions;
+    if (node.actions.capacity() < candidate_actions.size()) {
+        ++node_buffer_growth_events_;
+    }
+    node.actions.assign(candidate_actions.begin(), candidate_actions.end());
+    if (node.children.capacity() < candidate_actions.size()) {
+        ++node_buffer_growth_events_;
+    }
     node.children.resize(candidate_actions.size());
 
-    auto priors = softmax_over_actions(policy_logits, candidate_actions);
-
+    const auto& priors = softmax_over_actions(policy_logits, candidate_actions);
     for (int i = 0; i < static_cast<int>(candidate_actions.size()); ++i) {
-        int child_id = pool.allocate();
+        const int child_id = pool.allocate();
         Node& child = pool.get(child_id);
-
         child.parent = node_id;
-        child.action_from_parent = candidate_actions[i];
-        child.prior = priors[i];
-
-        pool.get(node_id).children[i] = child_id;
+        child.action_from_parent = candidate_actions[static_cast<size_t>(i)];
+        child.prior = priors[static_cast<size_t>(i)];
+        pool.get(node_id).children[static_cast<size_t>(i)] = child_id;
     }
-
     return node_id;
 }
 
@@ -221,27 +254,30 @@ void MCTS::apply_root_noise(NodePool& pool, int root_id) {
     Node& root = pool.get(root_id);
     if (root.children.empty()) return;
 
+    if (root_noise_scratch_.capacity() < root.children.size()) {
+        ++scratch_capacity_growth_events_;
+    }
+    root_noise_scratch_.resize(root.children.size());
     std::gamma_distribution<double> gamma(
         static_cast<double>(cfg_.root_dirichlet_alpha), 1.0);
-    std::vector<double> noise(root.children.size(), 0.0);
     double sum = 0.0;
-    for (double& value : noise) {
+    for (double& value : root_noise_scratch_) {
         value = gamma(rng_);
         sum += value;
     }
 
     if (!std::isfinite(sum) || sum <= 0.0) {
-        const double uniform = 1.0 / static_cast<double>(noise.size());
-        std::fill(noise.begin(), noise.end(), uniform);
+        const double uniform = 1.0 / static_cast<double>(root_noise_scratch_.size());
+        std::fill(root_noise_scratch_.begin(), root_noise_scratch_.end(), uniform);
     } else {
-        for (double& value : noise) value /= sum;
+        for (double& value : root_noise_scratch_) value /= sum;
     }
 
     const float keep = 1.0f - cfg_.root_noise_weight;
     for (size_t i = 0; i < root.children.size(); ++i) {
         Node& child = pool.get(root.children[i]);
-        child.prior = keep * child.prior +
-                      cfg_.root_noise_weight * static_cast<float>(noise[i]);
+        child.prior = keep * child.prior
+            + cfg_.root_noise_weight * static_cast<float>(root_noise_scratch_[i]);
     }
 }
 
@@ -250,18 +286,19 @@ void MCTS::validate_eval_output(
     int expected_batch_size,
     const char* stage
 ) const {
-    if (expected_batch_size <= 0 ||
-        output.values.size() != static_cast<size_t>(expected_batch_size) ||
-        output.rewards.size() != static_cast<size_t>(expected_batch_size) ||
-        output.policy_logits.size() != static_cast<size_t>(expected_batch_size)) {
+    if (expected_batch_size <= 0
+        || output.values.size() != static_cast<size_t>(expected_batch_size)
+        || output.rewards.size() != static_cast<size_t>(expected_batch_size)
+        || output.policy_logits.size() != static_cast<size_t>(expected_batch_size)) {
         throw std::runtime_error(std::string("Invalid ") + stage + " batch dimensions");
     }
 
     for (int i = 0; i < expected_batch_size; ++i) {
-        if (!std::isfinite(output.values[i]) || !std::isfinite(output.rewards[i])) {
+        if (!std::isfinite(output.values[static_cast<size_t>(i)])
+            || !std::isfinite(output.rewards[static_cast<size_t>(i)])) {
             throw std::runtime_error(std::string("Non-finite value or reward from ") + stage);
         }
-        const auto& logits = output.policy_logits[i];
+        const auto& logits = output.policy_logits[static_cast<size_t>(i)];
         if (logits.size() != kActionSpaceSize) {
             throw std::runtime_error(std::string("Invalid policy size from ") + stage);
         }
@@ -281,10 +318,9 @@ int MCTS::select_child(
     const Node& node = pool.get(node_id);
     int best_index = -1;
     float best_score = -std::numeric_limits<float>::infinity();
-
     for (int i = 0; i < static_cast<int>(node.children.size()); ++i) {
-        const Node& child = pool.get(node.children[i]);
-        float score = ucb_score(node, child, minmax);
+        const Node& child = pool.get(node.children[static_cast<size_t>(i)]);
+        const float score = ucb_score(node, child, minmax);
         if (score > best_score) {
             best_score = score;
             best_index = i;
@@ -299,15 +335,14 @@ float MCTS::ucb_score(
     const MinMaxStats& minmax
 ) const {
     float pb_c = std::log(
-        (parent.visit_count + cfg_.pb_c_base + 1.0f) / cfg_.pb_c_base
-    ) + cfg_.pb_c_init;
+        (parent.visit_count + cfg_.pb_c_base + 1.0f) / cfg_.pb_c_base)
+        + cfg_.pb_c_init;
+    pb_c *= std::sqrt(static_cast<float>(std::max(1, parent.visit_count)))
+        / (child.visit_count + 1.0f);
 
-    pb_c *= std::sqrt(static_cast<float>(std::max(1, parent.visit_count))) /
-            (child.visit_count + 1.0f);
-
-    float prior_score = pb_c * child.prior;
-    float value_score = minmax.normalize(child.reward + cfg_.discount * child.value());
-
+    const float prior_score = pb_c * child.prior;
+    const float value_score = minmax.normalize(
+        child.reward + cfg_.discount * child.value());
     return prior_score + value_score;
 }
 
@@ -318,77 +353,80 @@ void MCTS::backup(
     MinMaxStats& minmax
 ) const {
     float bootstrap = value;
-
     for (int i = static_cast<int>(search_path.size()) - 1; i >= 0; --i) {
-        Node& node = pool.get(search_path[i]);
-
+        Node& node = pool.get(search_path[static_cast<size_t>(i)]);
         node.value_sum += bootstrap;
         node.visit_count += 1;
-
-        float q = node.reward + cfg_.discount * node.value();
+        const float q = node.reward + cfg_.discount * node.value();
         minmax.update(q);
-
         bootstrap = node.reward + cfg_.discount * bootstrap;
     }
 }
 
-std::vector<int> MCTS::select_topk_candidates(
+const std::vector<int>& MCTS::select_topk_candidates(
     const std::vector<float>& policy_logits,
     int k
-) const {
-    std::vector<std::pair<float, int>> scored_actions;
-    scored_actions.reserve(policy_logits.size());
+) {
+    scored_actions_scratch_.clear();
+    if (scored_actions_scratch_.capacity() < policy_logits.size()) {
+        ++scratch_capacity_growth_events_;
+    }
     for (int i = 0; i < static_cast<int>(policy_logits.size()); ++i) {
-        scored_actions.push_back({policy_logits[i], i});
+        scored_actions_scratch_.push_back({policy_logits[static_cast<size_t>(i)], i});
     }
 
-    int actual_k = std::min(k, static_cast<int>(scored_actions.size()));
+    const int actual_k = std::min(k, static_cast<int>(scored_actions_scratch_.size()));
     std::partial_sort(
-        scored_actions.begin(), scored_actions.begin() + actual_k, scored_actions.end(),
-        [](const auto& a, const auto& b) {
-            if (a.first != b.first) return a.first > b.first;
-            return a.second < b.second;
+        scored_actions_scratch_.begin(),
+        scored_actions_scratch_.begin() + actual_k,
+        scored_actions_scratch_.end(),
+        [](const auto& left, const auto& right) {
+            if (left.first != right.first) return left.first > right.first;
+            return left.second < right.second;
         });
 
-    std::vector<int> topk;
-    topk.reserve(actual_k);
-    for (int i = 0; i < actual_k; ++i) {
-        topk.push_back(scored_actions[i].second);
+    topk_actions_scratch_.clear();
+    if (topk_actions_scratch_.capacity() < static_cast<size_t>(actual_k)) {
+        ++scratch_capacity_growth_events_;
     }
-    return topk;
+    for (int i = 0; i < actual_k; ++i) {
+        topk_actions_scratch_.push_back(
+            scored_actions_scratch_[static_cast<size_t>(i)].second);
+    }
+    return topk_actions_scratch_;
 }
 
-std::vector<float> MCTS::softmax_over_actions(
+const std::vector<float>& MCTS::softmax_over_actions(
     const std::vector<float>& logits,
     const std::vector<int>& actions
-) const {
-    if (actions.empty()) return {};
+) {
+    priors_scratch_.clear();
+    if (actions.empty()) return priors_scratch_;
 
     float max_logit = -std::numeric_limits<float>::infinity();
     for (int action : actions) {
         if (action < 0 || action >= static_cast<int>(logits.size())) {
             throw std::runtime_error("MCTS candidate action is outside policy logits");
         }
-        max_logit = std::max(max_logit, logits[action]);
+        max_logit = std::max(max_logit, logits[static_cast<size_t>(action)]);
     }
 
-    std::vector<float> exps;
-    exps.reserve(actions.size());
+    if (priors_scratch_.capacity() < actions.size()) {
+        ++scratch_capacity_growth_events_;
+    }
     double sum_exp = 0.0;
     for (int action : actions) {
-        float value = std::exp(logits[action] - max_logit);
-        exps.push_back(value);
+        const float value = std::exp(logits[static_cast<size_t>(action)] - max_logit);
+        priors_scratch_.push_back(value);
         sum_exp += value;
     }
-
     if (!std::isfinite(sum_exp) || sum_exp <= 0.0) {
         throw std::runtime_error("MCTS policy softmax normalization failed");
     }
-    for (float& value : exps) {
+    for (float& value : priors_scratch_) {
         value = static_cast<float>(value / sum_exp);
     }
-
-    return exps;
+    return priors_scratch_;
 }
 
 } // namespace tdmz
