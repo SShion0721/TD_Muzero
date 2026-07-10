@@ -78,23 +78,36 @@ Pending architecture decision:
 
 - Retain one `NodePool` per `MCTS` instance instead of allocating its backing store for every search.
 - Reuse previously created node objects while resetting scalar search state.
-- Preserve each node's `actions` and `children` vector capacity between searches.
 - Reuse legal-action validation, initial-observation, recurrent-input, search-path, top-k, softmax, and root-noise buffers.
-- Keep inactive node IDs invalid after pool clear while retaining their storage for the next search.
-- Expose node creation/reuse, node-buffer growth, scratch-capacity growth, and maximum-depth diagnostics.
+- Keep inactive node IDs invalid after pool clear while retaining node storage for the next search.
+- Expose node creation/reuse, scratch-capacity growth, and maximum-depth diagnostics.
 - Warm the benchmark once and report allocation-growth events only for the timed repeated-search interval.
 
 Validation:
 
 - Repeated deterministic searches compare action, root value, root actions, priors, visits, full policy, node count, branching, and depth field-for-field.
-- After warm-up, identical searches create zero node objects and trigger zero node-buffer or scratch-capacity growth events.
+- After warm-up, identical searches create zero node objects and trigger zero scratch-capacity growth events.
 - Full Torch-disabled CTest passes on GitHub-hosted Ubuntu and Windows runners.
 
-### B2.2. Contiguous edge storage — pending
+### B2.2. Contiguous edge storage — completed
 
-- Replace per-node `actions` and `children` vectors with a contiguous edge pool.
-- Preserve action order, child lookup, tie-breaking, visit counts, Q values, and root outputs exactly.
-- Compare the old and new layouts under deterministic evaluator traces before removing the vector layout.
+- Remove the per-node `actions` and `children` vectors.
+- Represent each expanded node with only `first_edge` and `edge_count`.
+- Store ordered `{action, child_id}` records in one contiguous `EdgePool` reserved to `max_nodes - 1`.
+- Allocate one contiguous edge range per expansion and reuse retained edge objects on later searches.
+- Preserve candidate order, UCB traversal order, equal-score tie-breaking, root action order, priors, visit counts, and full policy mapping.
+- Reject inactive edge IDs after pool clear while retaining edge storage.
+- Expose total edge count and edge creation/reuse diagnostics.
+- Update the warmed benchmark to report node and edge reuse independently.
+
+Validation:
+
+- Every completed tree asserts `total_edges == total_nodes - 1`.
+- Contiguous range allocation and post-clear edge reuse are directly tested.
+- Repeated deterministic searches remain field-for-field equal.
+- After warm-up, identical searches create zero node or edge objects and trigger zero scratch growth.
+- Existing root-noise, node-capacity, backup-sign, legality, and evaluator-validation tests remain unchanged and pass.
+- Full Torch-disabled CTest passes on GitHub-hosted Ubuntu and Windows runners.
 
 ### B2.3. Batched leaf inference — pending
 
@@ -212,8 +225,7 @@ Each completed phase must provide:
 
 ## Current execution order
 
-1. Implement B2.2 contiguous edge storage with deterministic layout parity.
-2. Implement B2.3 batched leaf recurrent inference.
-3. Implement D spatial action, policy, and legality architecture.
-4. Complete E1b trainer persistence, toolchain locking, and optional LibTorch CI.
-5. Run final locked release validation and benchmark reporting.
+1. Implement B2.3 batched leaf recurrent inference.
+2. Implement D spatial action, policy, and legality architecture.
+3. Complete E1b trainer persistence, toolchain locking, and optional LibTorch CI.
+4. Run final locked release validation and benchmark reporting.

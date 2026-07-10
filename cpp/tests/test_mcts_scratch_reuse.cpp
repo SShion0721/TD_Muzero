@@ -1,6 +1,7 @@
 #include "tdmz/core/engine.hpp"
 #include "tdmz/core/observation.hpp"
 #include "tdmz/mcts/dummy_network.hpp"
+#include "tdmz/mcts/edge_pool.hpp"
 #include "tdmz/mcts/mcts.hpp"
 #include "tdmz/mcts/node_pool.hpp"
 
@@ -32,16 +33,13 @@ void check_throws_out_of_range(Fn&& function) {
     CHECK_TRUE(threw);
 }
 
-void test_node_pool_retains_nodes_and_child_capacity() {
+void test_node_pool_retains_node_objects() {
     NodePool pool(4);
     const int first_id = pool.allocate();
     CHECK_TRUE(first_id == 0);
-    pool.get(first_id).actions.reserve(17);
-    pool.get(first_id).children.reserve(19);
-    const size_t action_capacity = pool.get(first_id).actions.capacity();
-    const size_t child_capacity = pool.get(first_id).children.capacity();
-    pool.get(first_id).actions.push_back(3);
-    pool.get(first_id).children.push_back(1);
+    pool.get(first_id).parent = 17;
+    pool.get(first_id).first_edge = 5;
+    pool.get(first_id).edge_count = 3;
 
     CHECK_TRUE(pool.new_nodes_this_search() == 1);
     CHECK_TRUE(pool.reused_nodes_this_search() == 0);
@@ -57,10 +55,34 @@ void test_node_pool_retains_nodes_and_child_capacity() {
     CHECK_TRUE(reused_id == 0);
     CHECK_TRUE(pool.new_nodes_this_search() == 0);
     CHECK_TRUE(pool.reused_nodes_this_search() == 1);
-    CHECK_TRUE(pool.get(0).actions.empty());
-    CHECK_TRUE(pool.get(0).children.empty());
-    CHECK_TRUE(pool.get(0).actions.capacity() == action_capacity);
-    CHECK_TRUE(pool.get(0).children.capacity() == child_capacity);
+    CHECK_TRUE(pool.get(0).parent == -1);
+    CHECK_TRUE(pool.get(0).first_edge == -1);
+    CHECK_TRUE(pool.get(0).edge_count == 0);
+}
+
+void test_edge_pool_allocates_contiguous_reusable_ranges() {
+    EdgePool pool(8);
+    const int first = pool.allocate_range(3);
+    const int second = pool.allocate_range(2);
+    CHECK_TRUE(first == 0);
+    CHECK_TRUE(second == 3);
+    CHECK_TRUE(pool.size() == 5);
+    CHECK_TRUE(pool.created_edges_this_search() == 5);
+    CHECK_TRUE(pool.reused_edges_this_search() == 0);
+    pool.get(0).action = 7;
+    pool.get(0).child = 11;
+
+    pool.clear();
+    CHECK_TRUE(pool.size() == 0);
+    CHECK_TRUE(pool.retained_edge_count() == 5);
+    check_throws_out_of_range([&] { (void)pool.get(0); });
+
+    const int reused = pool.allocate_range(5);
+    CHECK_TRUE(reused == 0);
+    CHECK_TRUE(pool.created_edges_this_search() == 0);
+    CHECK_TRUE(pool.reused_edges_this_search() == 5);
+    CHECK_TRUE(pool.get(0).action == 7);
+    CHECK_TRUE(pool.get(0).child == 11);
 }
 
 void check_search_outputs_equal(
@@ -74,6 +96,7 @@ void check_search_outputs_equal(
     CHECK_TRUE(first.visit_counts == second.visit_counts);
     CHECK_TRUE(first.policy_full == second.policy_full);
     CHECK_TRUE(first.debug.total_nodes == second.debug.total_nodes);
+    CHECK_TRUE(first.debug.total_edges == second.debug.total_edges);
     CHECK_TRUE(first.debug.max_root_branching == second.debug.max_root_branching);
     CHECK_TRUE(first.debug.max_latent_branching == second.debug.max_latent_branching);
     CHECK_TRUE(first.debug.max_search_depth == second.debug.max_search_depth);
@@ -99,14 +122,17 @@ void test_repeated_search_reuses_all_retained_storage() {
         network, observation, legal_actions);
     check_search_outputs_equal(first, second);
 
+    CHECK_TRUE(first.debug.total_edges == first.debug.total_nodes - 1);
     CHECK_TRUE(first.debug.node_objects_created == first.debug.total_nodes);
     CHECK_TRUE(first.debug.node_objects_reused == 0);
-    CHECK_TRUE(first.debug.node_buffer_growth_events > 0);
+    CHECK_TRUE(first.debug.edge_objects_created == first.debug.total_edges);
+    CHECK_TRUE(first.debug.edge_objects_reused == 0);
     CHECK_TRUE(first.debug.scratch_capacity_growth_events <= 1);
 
     CHECK_TRUE(second.debug.node_objects_created == 0);
     CHECK_TRUE(second.debug.node_objects_reused == second.debug.total_nodes);
-    CHECK_TRUE(second.debug.node_buffer_growth_events == 0);
+    CHECK_TRUE(second.debug.edge_objects_created == 0);
+    CHECK_TRUE(second.debug.edge_objects_reused == second.debug.total_edges);
     CHECK_TRUE(second.debug.scratch_capacity_growth_events == 0);
     CHECK_TRUE(second.debug.max_search_depth > 0);
 }
@@ -130,17 +156,19 @@ void test_larger_observation_only_grows_scratch_once() {
     CHECK_TRUE(larger.debug.scratch_capacity_growth_events == 1);
     CHECK_TRUE(repeated.debug.scratch_capacity_growth_events == 0);
     CHECK_TRUE(repeated.debug.node_objects_created == 0);
-    CHECK_TRUE(repeated.debug.node_buffer_growth_events == 0);
+    CHECK_TRUE(repeated.debug.edge_objects_created == 0);
+    CHECK_TRUE(repeated.debug.total_edges == repeated.debug.total_nodes - 1);
 }
 
 } // namespace
 
 int main() {
     try {
-        test_node_pool_retains_nodes_and_child_capacity();
+        test_node_pool_retains_node_objects();
+        test_edge_pool_allocates_contiguous_reusable_ranges();
         test_repeated_search_reuses_all_retained_storage();
         test_larger_observation_only_grows_scratch_once();
-        std::cout << "MCTS scratch reuse tests passed!" << std::endl;
+        std::cout << "MCTS contiguous edge reuse tests passed!" << std::endl;
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << std::endl;
