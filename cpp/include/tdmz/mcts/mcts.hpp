@@ -33,7 +33,6 @@ private:
     std::vector<uint8_t> seen_actions_scratch_;
     std::vector<std::vector<float>> initial_observations_scratch_;
     EvalInput recurrent_input_scratch_;
-    std::vector<int> search_path_scratch_;
     std::vector<std::pair<float, int>> scored_actions_scratch_;
     std::vector<int> topk_actions_scratch_;
     std::vector<float> priors_scratch_;
