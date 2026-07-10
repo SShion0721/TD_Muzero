@@ -1,5 +1,6 @@
 #include "tdmz/selfplay/replay_dataset.hpp"
 #include <algorithm>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <regex>
@@ -40,20 +41,37 @@ std::string unescape_json_string(const std::string& s) {
 std::vector<std::string> parse_shard_paths_from_index_json(const std::string& index_path) {
     std::string text = read_text_file(index_path);
     std::vector<std::string> paths;
+    const std::filesystem::path index_parent = std::filesystem::path(index_path).parent_path();
     std::regex path_re("\\\"path\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"");
     auto begin = std::sregex_iterator(text.begin(), text.end(), path_re);
     auto end = std::sregex_iterator();
     for (auto it = begin; it != end; ++it) {
-        paths.push_back(unescape_json_string((*it)[1].str()));
+        std::filesystem::path shard_path(unescape_json_string((*it)[1].str()));
+        if (shard_path.is_relative() && !std::filesystem::exists(shard_path) && !index_parent.empty()) {
+            const std::filesystem::path relative_to_index = index_parent / shard_path;
+            if (std::filesystem::exists(relative_to_index)) {
+                shard_path = relative_to_index;
+            }
+        }
+        paths.push_back(shard_path.lexically_normal().string());
     }
     if (paths.empty()) throw std::runtime_error("No shard paths found in replay index JSON: " + index_path);
     return paths;
 }
 
-void ensure_step_tensor_sizes(const TrajectoryStep& step, int& obs_size, int& policy_size, int& mask_size) {
-    if (obs_size == 0) obs_size = static_cast<int>(step.observation.size());
-    if (policy_size == 0) policy_size = static_cast<int>(step.policy_target.size());
-    if (mask_size == 0) mask_size = static_cast<int>(step.legal_mask.size());
+void ensure_step_tensor_sizes(
+    const TrajectoryStep& step,
+    bool& initialized,
+    int& obs_size,
+    int& policy_size,
+    int& mask_size
+) {
+    if (!initialized) {
+        obs_size = static_cast<int>(step.observation.size());
+        policy_size = static_cast<int>(step.policy_target.size());
+        mask_size = static_cast<int>(step.legal_mask.size());
+        initialized = true;
+    }
 
     if (static_cast<int>(step.observation.size()) != obs_size ||
         static_cast<int>(step.policy_target.size()) != policy_size ||
@@ -154,13 +172,14 @@ ReplayBatch ReplayBatchSampler::sample_batch(int batch_size) {
     batch.actions.reserve(batch_size);
     batch.dones.reserve(batch_size);
 
+    bool tensor_sizes_initialized = false;
     int obs_size = 0;
     int policy_size = 0;
     int mask_size = 0;
 
     for (int i = 0; i < batch_size; ++i) {
         TrajectoryStep step = dataset_.sample_step(next_u64());
-        ensure_step_tensor_sizes(step, obs_size, policy_size, mask_size);
+        ensure_step_tensor_sizes(step, tensor_sizes_initialized, obs_size, policy_size, mask_size);
 
         if (i == 0) {
             batch.observation_size = obs_size;
