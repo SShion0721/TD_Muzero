@@ -1,5 +1,6 @@
 #include "tdmz/core/action.hpp"
 #include "tdmz/core/observation.hpp"
+#include <algorithm>
 #include <cmath>
 #include <exception>
 #include <iostream>
@@ -39,7 +40,8 @@ static Observation make_observation_v1_reference(const TDEngine& env) {
         else if (tower.type == TowerType::Slow) at(CH_TOWER_SLOW, y, x) = 1.0f;
 
         at(CH_TOWER_LEVEL, y, x) = std::min(1.0f, static_cast<float>(tower.level) / static_cast<float>(kTowerMaxLevel));
-        at(CH_TOWER_COOLDOWN, y, x) = tower.cooldown / tower.cooldown_max;
+        const float cooldown_ratio = tower.cooldown_max > 0.0f ? tower.cooldown / tower.cooldown_max : 0.0f;
+        at(CH_TOWER_COOLDOWN, y, x) = std::clamp(cooldown_ratio, 0.0f, 1.0f);
     }
 
     for (const auto& enemy : env.enemies()) {
@@ -134,10 +136,27 @@ void test_cache_switches_between_env_instances() {
     assert_obs_equal(a, "env_a_again_after_b");
 }
 
+void test_cooldown_channel_is_clamped() {
+    TDEngine env(11, 11, 0);
+    CHECK_TRUE(env.place_tower(1, 1, TowerType::Basic));
+
+    auto& towers = const_cast<std::vector<Tower>&>(env.towers());
+    towers.front().cooldown = -0.5f;
+
+    Observation obs = make_observation_v1(env);
+    const int index = (CH_TOWER_COOLDOWN * kBoardH + 1) * kBoardW + 1;
+    CHECK_TRUE(obs[index] == 0.0f);
+
+    towers.front().cooldown = towers.front().cooldown_max * 2.0f;
+    obs = make_observation_v1(env);
+    CHECK_TRUE(obs[index] == 1.0f);
+}
+
 int main() {
     try {
         test_static_cache_matches_reference_across_versions();
         test_cache_switches_between_env_instances();
+        test_cooldown_channel_is_clamped();
         std::cout << "Observation cache tests passed!" << std::endl;
         return 0;
     } catch (const std::exception& e) {
