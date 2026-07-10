@@ -39,13 +39,13 @@ Compatibility: trajectories generated under the old waypoint-capped movement rul
 
 - The engine uses discrete one-second ticks.
 - `step_time(dt)` accepts only finite, non-negative integer seconds.
-- A multi-second call executes repeated one-second ticks and stops early on terminal state.
-- `step_time(0)` is a no-op that preserves the current terminal flag.
+- Multi-second calls execute repeated one-second ticks and stop on terminal state.
+- `step_time(0)` is a no-op that preserves the terminal flag.
 - Fractional, negative, NaN, infinite, and out-of-range durations are rejected.
 - `step_wait()` uses the same tick implementation and rejects negative waits.
-- Full public engine state is compared between batched multi-tick execution and repeated one-tick execution, including follow-up evolution.
+- Full public state is compared between batched and repeated one-tick execution.
 
-Compatibility: standard RL actions remain one second and retain their previous behavior. Callers using fractional `dt` must migrate to explicit discrete ticks.
+Compatibility: standard RL actions remain one second. Fractional-`dt` callers must migrate to explicit ticks.
 
 ## Phase B — MCTS correctness and performance
 
@@ -54,7 +54,7 @@ Compatibility: standard RL actions remain one second and retain their previous b
 - Seeded instance-local root Dirichlet noise.
 - Deterministic self-play MCTS seeding from the game seed.
 - Explicit single-player backup support; unsupported multiplayer backup is rejected.
-- Validation of legal roots, evaluator dimensions, policy width, latent IDs, and finite values/rewards/logits.
+- Validation of legal roots, evaluator dimensions, policy width, latent IDs, and finite outputs.
 - Root-prior and invalid-output regressions.
 
 ### B1. Latent legality and search semantics — partially completed
@@ -66,19 +66,19 @@ Completed:
 - Fail undersized searches before mutating the tree or evaluator latent store.
 - Prevent partial child allocation.
 - Test NaN and infinity in initial and recurrent inference.
-- Lock exact-capacity, one-slot-short, and single-player `reward + discount * value` behavior.
+- Lock exact-capacity, one-slot-short, and `reward + discount * value` behavior.
 
 Pending architecture decision:
 
-- A legality head exists in the prediction network, but the evaluator and MCTS do not expose or consume it.
+- A legality head exists, but evaluator and MCTS do not expose or consume it.
 - No canonical C++ trainer currently supervises or calibrates latent legality.
-- Legality integration or head removal is deferred to Phase D because either choice changes checkpoint compatibility.
+- Integration or removal is deferred to Phase D because it changes checkpoints.
 
 ### B2. MCTS layout and batching — pending
 
 - Reuse search path, action, and evaluator scratch buffers.
 - Measure and remove per-simulation dynamic allocation.
-- Replace per-node child vectors with a contiguous edge pool after semantic parity tests.
+- Replace per-node child vectors with a contiguous edge pool after parity tests.
 - Batch leaf recurrent inference before lower-level GPU micro-optimization.
 
 ## Phase C — replay and binary data path
@@ -86,39 +86,55 @@ Pending architecture decision:
 ### C0. Compatibility-preserving replay fixes — completed
 
 - Explicit tensor-shape initialization instead of a zero-size sentinel.
-- Relative shard path resolution from the index location.
+- Relative shard paths resolved from the index location.
 - Reader lifetime cleanup for Windows test deletion.
-- Batch references grouped by game so each sampled game is deserialized once per batch.
+- Batch references grouped by game so each sampled game is deserialized once.
 - Direct writes into pre-sized flat batch buffers.
 - Separate physical game-read and packed-payload metrics.
 
-Validated local result: a 2048-sample batch over a four-game test dataset performed four physical game reads, or 512 samples per read.
+Validated local result: a 2048-sample batch over a four-game test dataset performed four whole-game reads, or 512 samples per read.
 
 ### C1. Writer and reader hardening — completed
 
 - Explicit async writer lifecycle: `Open -> Closing -> Closed/Failed`.
 - Serialized concurrent close and immediate rejection after closing starts.
-- Atomic same-directory shard publication.
-- Cleanup of incomplete temporary shards.
+- Atomic same-directory shard publication and incomplete-temp cleanup.
 - Bounds, offset, tensor-size, overflow, finite-value, flag, truncation, and trailing-byte validation.
 - Corruption, concurrency, and failure-cleanup regressions.
 
-Compatibility: version-1 binary shard layout is unchanged, but malformed files previously accepted may now be rejected.
+Compatibility: replay binary v1 remains readable, while malformed files previously accepted may now be rejected.
 
-### C2. Transition-level replay format — pending
+### C2. Transition-level replay format — completed
 
-- Preserve and document the sampling distribution explicitly.
-- Add transition offsets so one sampled step does not deserialize an entire game.
-- Implement `read_step_into_batch()` with preallocated memory.
-- Group reads by shard and physical offset.
-- Report physical bytes read, packed bytes, and read amplification separately.
-- Keep replay binary v1 readable while writing a versioned transition-indexed format.
+- Advance the binary replay format to version 2 while retaining v1 read support.
+- Store payloads sequentially, followed by compact game and transition index tables.
+- Persist one physical offset and size for every transition.
+- Preserve the exact sampling distribution: uniform game, then uniform step within that game.
+- Sort batch requests by shard and physical offset.
+- Read observations, policy targets, legal masks, values, rewards, actions, and done flags directly into preallocated batch rows.
+- Deduplicate repeated requests for the same transition inside a batch.
+- Reject mixed v1/v2 shard sets and index/shard version mismatches.
+- Report exact contiguous-range reads, physical bytes, packed bytes, unique games/shards, and read amplification for v2.
+- Keep whole-game v1 loading as a compatibility fallback with explicitly non-exact byte metrics.
+
+Validation:
+
+- v2 round-trip, atomic publication, async concurrent close, future-version rejection, bad-offset rejection, truncation rejection, and shape mismatch tests.
+- Fixed-seed v1/v2 batch outputs are compared field-for-field to lock sampling semantics.
+- Full Torch-disabled CTest passes on GitHub-hosted Ubuntu and Windows runners.
+
+Compatibility:
+
+- Replay index format remains version 2.
+- New self-play generation writes replay binary v2 and documents `uniform_game_then_uniform_step`.
+- Existing index-v2 datasets declaring replay binary v1 remain readable.
+- Legacy v1 or unversioned indexes still require explicit reviewed opt-in.
 
 ## Phase D — C++ network architecture — pending
 
 - Replace scalar/global action encoding with structured action type and spatial target planes.
-- Produce spatial policy and legality logits for build, upgrade, and sell actions, plus an independent wait logit.
-- Keep the public flat 727-action representation only as an interface mapping.
+- Produce spatial policy and legality logits for build, upgrade, and sell, plus an independent wait logit.
+- Keep flat 727-action representation only as an interface mapping.
 - Add coordinate sensitivity, translation, local latent response, action mapping, and legality integration tests.
 - Introduce a new network architecture identifier and checkpoint boundary.
 
@@ -132,33 +148,26 @@ Compatibility: version-1 binary shard layout is unchanged, but malformed files p
 
 ### E0.5. Interactive engine observability — completed
 
-- Add an optional zero-dependency Win32/GDI GUI that drives the canonical `TDEngine` directly.
-- Visualize the board, placeability, towers, enemies, HP, slow state, economy, wave, timers, legality, rewards, and recent actions.
-- Support inspect, build, upgrade, sell, one/multi-tick stepping, auto-run, reset, seeds, and fixed/budgeted waves.
-- Keep Linux builds unchanged and compile/link the GUI in Windows CI.
+- Optional zero-dependency Win32/GDI GUI driving the canonical `TDEngine`.
+- Board, placeability, towers, enemies, HP, slow state, economy, waves, timers, legality, rewards, and recent actions.
+- Inspect, build, upgrade, sell, one/multi-tick stepping, auto-run, reset, seeds, and fixed/budgeted waves.
+- Linux builds remain unchanged; Windows CI compiles and links the GUI.
 
 ### E1a. Compatibility metadata and manifests — completed
 
-- Define canonical replay, environment-rule, observation, action-space, reward-transform, and network-architecture versions.
-- Write replay index version 2 with complete compatibility metadata while keeping the binary shard layout at version 1.
-- Make replay loaders and benchmarks reject legacy or incompatible indexes by default.
-- Permit v1 or unversioned indexes only through an explicit reviewed legacy opt-in.
-- Report field-specific actual/expected values for compatibility failures.
-- Add a checkpoint manifest format that records compatibility metadata, network dimensions, training step, seed, and optimizer-state presence.
-- Validate checkpoint manifests for inference or full training-resume requirements.
+- Canonical replay, environment-rule, observation, action-space, reward-transform, and network-architecture versions.
+- Replay index version 2 with complete compatibility metadata.
+- Legacy or incompatible indexes rejected by default.
+- Field-specific actual/expected compatibility errors.
+- Checkpoint manifest contract for dimensions, versions, training step, seed, and optimizer-state presence.
 
-Compatibility:
-
-- Existing `.tdmzshd` binary files remain readable.
-- Existing version-1 or unversioned index JSON files require explicit `AllowV1` / `--allow-legacy-index` use because they cannot prove their rule and tensor contracts.
-- New self-play generation writes index version 2.
-- The canonical C++ path still has no complete model/optimizer serialization implementation; the manifest establishes the required contract without claiming that persistence already exists.
+The canonical C++ path still has no complete model/optimizer serialization implementation; the manifest defines the contract without claiming persistence exists.
 
 ### E1b. Trainer persistence and release toolchain — pending
 
-- Integrate the manifest with the future canonical C++ model and optimizer save/load implementation.
-- Save and restore RNG/training state required for reproducible continuation.
-- Lock a supported compiler, CMake, LibTorch, CUDA, and cuDNN matrix.
+- Integrate manifests with canonical model and optimizer save/load.
+- Save and restore RNG and training state for reproducible continuation.
+- Lock supported compiler, CMake, LibTorch, CUDA, and cuDNN versions.
 - Add optional reproducible LibTorch CI.
 - Record benchmark deltas with fixed workloads.
 
@@ -168,7 +177,7 @@ Each completed phase must provide:
 
 - focused unit and regression tests;
 - full Torch-disabled CTest on Ubuntu and Windows;
-- Golden Trace verification when environment semantics can affect normal one-second actions;
+- Golden Trace verification when environment semantics can affect one-second actions;
 - before/after benchmark for performance work;
 - explicit replay and checkpoint compatibility notes.
 
@@ -181,9 +190,9 @@ Each completed phase must provide:
 
 ## Current execution order
 
-1. Validate and merge E1a compatibility metadata and manifests.
-2. Implement C2 transition-indexed replay.
-3. Implement B2 MCTS scratch reuse, contiguous edges, and batched leaf inference.
+1. Implement B2 MCTS scratch reuse and allocation instrumentation.
+2. Replace per-node child vectors with contiguous edge storage after semantic parity.
+3. Add batched leaf recurrent inference.
 4. Implement D spatial action, policy, and legality architecture.
 5. Complete E1b trainer persistence, toolchain locking, and optional LibTorch CI.
 6. Run final locked release validation and benchmark reporting.
