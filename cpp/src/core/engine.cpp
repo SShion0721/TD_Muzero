@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <stdexcept>
 
 namespace tdmz {
@@ -480,16 +481,17 @@ std::vector<uint8_t> TDEngine::legal_action_mask() const {
 }
 
 StepResult TDEngine::step_wait(int wait_steps) {
-    StepResult r;
-    for (int i = 0; i < wait_steps; ++i) {
-        auto step_r = step_time(1.0f);
-        r.reward += step_r.reward;
-        if (step_r.done) {
-            r.done = true;
-            break;
-        }
+    if (wait_steps < 0) {
+        throw std::invalid_argument("wait_steps must be non-negative");
     }
-    return r;
+
+    StepResult result{0.0f, game_over_};
+    for (int i = 0; i < wait_steps && !result.done; ++i) {
+        const StepResult tick = step_one_tick();
+        result.reward += tick.reward;
+        result.done = tick.done;
+    }
+    return result;
 }
 
 StepResult TDEngine::step_action(int flat_action) {
@@ -524,8 +526,18 @@ StepResult TDEngine::step_action(int flat_action) {
 }
 
 StepResult TDEngine::step_time(float dt) {
+    const double seconds = static_cast<double>(dt);
+    if (!std::isfinite(seconds) || seconds < 0.0 || std::floor(seconds) != seconds ||
+        seconds > static_cast<double>(std::numeric_limits<int>::max())) {
+        throw std::invalid_argument("step_time requires a finite non-negative integer number of seconds");
+    }
+    return step_wait(static_cast<int>(seconds));
+}
+
+StepResult TDEngine::step_one_tick() {
     if (game_over_) return {0.0f, true};
 
+    constexpr float dt = 1.0f;
     float step_reward = 0.0f;
     bool enemies_changed = false;
 

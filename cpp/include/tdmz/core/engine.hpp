@@ -141,6 +141,8 @@ private:
     void mark_enemies_changed();
     void mark_wave_changed();
 
+    StepResult step_one_tick();
+
     void recompute_base_distance_cache() const;
     std::vector<std::pair<int,int>> path_to_base_from_cell(int start_cell) const;
 

@@ -4,6 +4,7 @@
 #include "tdmz/core/tower.hpp"
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -14,6 +15,76 @@ static void check_true(bool ok, const char* expr, int line) {
 }
 #define CHECK_TRUE(x) check_true(static_cast<bool>(x), #x, __LINE__)
 
+static bool near_float(float a, float b, float eps = 1e-5f) {
+    return std::abs(a - b) <= eps;
+}
+
+template <typename Fn>
+static void check_invalid_argument(Fn&& fn) {
+    bool threw = false;
+    try {
+        fn();
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    CHECK_TRUE(threw);
+}
+
+static void check_engine_state_equal(const TDEngine& lhs, const TDEngine& rhs) {
+    CHECK_TRUE(lhs.grid() == rhs.grid());
+    CHECK_TRUE(lhs.money() == rhs.money());
+    CHECK_TRUE(lhs.base_hp() == rhs.base_hp());
+    CHECK_TRUE(lhs.wave() == rhs.wave());
+    CHECK_TRUE(near_float(lhs.spawn_timer(), rhs.spawn_timer()));
+    CHECK_TRUE(lhs.enemies_to_spawn_count() == rhs.enemies_to_spawn_count());
+    CHECK_TRUE(near_float(lhs.pending_spawn_total_hp(), rhs.pending_spawn_total_hp()));
+    CHECK_TRUE(lhs.game_over() == rhs.game_over());
+    CHECK_TRUE(near_float(lhs.time(), rhs.time()));
+    CHECK_TRUE(lhs.grid_version() == rhs.grid_version());
+    CHECK_TRUE(lhs.tower_version() == rhs.tower_version());
+    CHECK_TRUE(lhs.money_version() == rhs.money_version());
+    CHECK_TRUE(lhs.enemy_version() == rhs.enemy_version());
+    CHECK_TRUE(lhs.wave_version() == rhs.wave_version());
+
+    CHECK_TRUE(lhs.towers().size() == rhs.towers().size());
+    for (size_t i = 0; i < lhs.towers().size(); ++i) {
+        const Tower& a = lhs.towers()[i];
+        const Tower& b = rhs.towers()[i];
+        CHECK_TRUE(a.x == b.x);
+        CHECK_TRUE(a.y == b.y);
+        CHECK_TRUE(a.type == b.type);
+        CHECK_TRUE(a.cost == b.cost);
+        CHECK_TRUE(near_float(a.damage, b.damage));
+        CHECK_TRUE(near_float(a.range, b.range));
+        CHECK_TRUE(near_float(a.cooldown_max, b.cooldown_max));
+        CHECK_TRUE(near_float(a.aoe_radius, b.aoe_radius));
+        CHECK_TRUE(near_float(a.slow_factor, b.slow_factor));
+        CHECK_TRUE(near_float(a.slow_duration, b.slow_duration));
+        CHECK_TRUE(near_float(a.cooldown, b.cooldown));
+        CHECK_TRUE(a.level == b.level);
+        CHECK_TRUE(a.total_spent == b.total_spent);
+        CHECK_TRUE(a.upgrade_cost == b.upgrade_cost);
+    }
+
+    CHECK_TRUE(lhs.enemies().size() == rhs.enemies().size());
+    for (size_t i = 0; i < lhs.enemies().size(); ++i) {
+        const Enemy& a = lhs.enemies()[i];
+        const Enemy& b = rhs.enemies()[i];
+        CHECK_TRUE(a.id == b.id);
+        CHECK_TRUE(near_float(a.x, b.x));
+        CHECK_TRUE(near_float(a.y, b.y));
+        CHECK_TRUE(near_float(a.target_x, b.target_x));
+        CHECK_TRUE(near_float(a.target_y, b.target_y));
+        CHECK_TRUE(near_float(a.hp, b.hp));
+        CHECK_TRUE(near_float(a.max_hp, b.max_hp));
+        CHECK_TRUE(near_float(a.speed, b.speed));
+        CHECK_TRUE(near_float(a.base_speed, b.base_speed));
+        CHECK_TRUE(near_float(a.slow_timer, b.slow_timer));
+        CHECK_TRUE(a.reward == b.reward);
+        CHECK_TRUE(a.path == b.path);
+    }
+}
+
 void test_constructor_rejects_non_11x11() {
     bool threw = false;
     try {
@@ -22,6 +93,61 @@ void test_constructor_rejects_non_11x11() {
         threw = true;
     }
     CHECK_TRUE(threw);
+}
+
+void test_step_time_zero_is_noop() {
+    TDEngine before(11, 11, 17);
+    TDEngine after(11, 11, 17);
+
+    const StepResult result = after.step_time(0.0f);
+
+    CHECK_TRUE(result.reward == 0.0f);
+    CHECK_TRUE(!result.done);
+    check_engine_state_equal(before, after);
+}
+
+void test_step_time_rejects_non_discrete_inputs() {
+    TDEngine env(11, 11, 0);
+    check_invalid_argument([&] { (void)env.step_time(-1.0f); });
+    check_invalid_argument([&] { (void)env.step_time(0.5f); });
+    check_invalid_argument([&] { (void)env.step_time(1.25f); });
+    check_invalid_argument([&] { (void)env.step_time(std::numeric_limits<float>::infinity()); });
+    check_invalid_argument([&] { (void)env.step_time(-std::numeric_limits<float>::infinity()); });
+    check_invalid_argument([&] { (void)env.step_time(std::numeric_limits<float>::quiet_NaN()); });
+    check_invalid_argument([&] { (void)env.step_time(std::numeric_limits<float>::max()); });
+    check_invalid_argument([&] { (void)env.step_wait(-1); });
+}
+
+void test_multi_tick_step_matches_repeated_single_ticks() {
+    TDEngine batched(11, 11, 29);
+    TDEngine repeated(11, 11, 29);
+
+    CHECK_TRUE(batched.place_tower(1, 4, TowerType::Slow));
+    CHECK_TRUE(repeated.place_tower(1, 4, TowerType::Slow));
+
+    const StepResult batched_result = batched.step_time(8.0f);
+    StepResult repeated_result;
+    for (int i = 0; i < 8 && !repeated_result.done; ++i) {
+        const StepResult tick = repeated.step_time(1.0f);
+        repeated_result.reward += tick.reward;
+        repeated_result.done = tick.done;
+    }
+
+    CHECK_TRUE(near_float(batched_result.reward, repeated_result.reward));
+    CHECK_TRUE(batched_result.done == repeated_result.done);
+    check_engine_state_equal(batched, repeated);
+
+    const StepResult batched_followup = batched.step_time(6.0f);
+    StepResult repeated_followup;
+    for (int i = 0; i < 6 && !repeated_followup.done; ++i) {
+        const StepResult tick = repeated.step_wait(1);
+        repeated_followup.reward += tick.reward;
+        repeated_followup.done = tick.done;
+    }
+
+    CHECK_TRUE(near_float(batched_followup.reward, repeated_followup.reward));
+    CHECK_TRUE(batched_followup.done == repeated_followup.done);
+    check_engine_state_equal(batched, repeated);
 }
 
 void test_path_on_empty_grid() {
@@ -201,6 +327,9 @@ void test_placeable_and_legal_actions_are_cached() {
 
 int main() {
     test_constructor_rejects_non_11x11();
+    test_step_time_zero_is_noop();
+    test_step_time_rejects_non_discrete_inputs();
+    test_multi_tick_step_matches_repeated_single_ticks();
     test_path_on_empty_grid();
     test_fast_enemy_consumes_full_movement_distance();
     test_slow_duration_spans_full_time_window();
