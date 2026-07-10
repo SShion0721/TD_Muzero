@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 
 namespace tdmz {
 
@@ -12,12 +13,15 @@ struct MCTSConfig {
     float root_dirichlet_alpha = 0.3f;
     float root_noise_weight = 0.25f;
     bool add_root_noise = false;
+    uint64_t random_seed = 0;
 
     int latent_top_k = 32;
     int max_nodes = 4096;
 
     float value_delta_max = 0.01f;
 
+    // Only single-player backup semantics are implemented at present.
+    // MCTS rejects false rather than silently applying the wrong value signs.
     bool single_player = true;
 };
 
