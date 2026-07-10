@@ -7,6 +7,7 @@ option(TDMZ_BUILD_ENGINE_DEBUG_GUI "Build the Windows engine debug GUI" ON)
 set(TDMZ_CORE_SOURCES
     src/core/action.cpp
     src/core/board_tables.cpp
+    src/core/compatibility.cpp
     src/core/enemy.cpp
     src/core/engine.cpp
     src/core/golden_trace.cpp
@@ -15,6 +16,7 @@ set(TDMZ_CORE_SOURCES
     src/core/rng.cpp
     src/core/tower.cpp
     src/mcts/mcts.cpp
+    src/persistence/checkpoint_manifest.cpp
     src/selfplay/replay_dataset.cpp
     src/selfplay/selfplay_runner.cpp
     src/selfplay/trajectory_writer.cpp
