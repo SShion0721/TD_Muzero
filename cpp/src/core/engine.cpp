@@ -544,24 +544,23 @@ StepResult TDEngine::step_time(float dt) {
         enemies_changed = true;
     }
 
-    std::vector<int> reached_base_ids;
     for (auto& enemy : enemies_) {
         enemy.step(dt);
         enemies_changed = true;
-        if (std::hypot(enemy.x - static_cast<float>(base_x_), enemy.y - static_cast<float>(base_y_)) < 0.2f) {
-            reached_base_ids.push_back(enemy.id);
-        }
     }
 
-    for (int id : reached_base_ids) {
-        auto it = std::find_if(enemies_.begin(), enemies_.end(), [id](const Enemy& e) { return e.id == id; });
-        if (it != enemies_.end()) {
-            base_hp_ -= static_cast<int>(it->max_hp) / 10;
-            enemies_.erase(it);
+    auto reached_base_end = std::remove_if(
+        enemies_.begin(), enemies_.end(),
+        [&](const Enemy& enemy) {
+            if (std::hypot(enemy.x - static_cast<float>(base_x_), enemy.y - static_cast<float>(base_y_)) >= 0.2f) {
+                return false;
+            }
+            base_hp_ -= static_cast<int>(enemy.max_hp) / 10;
             step_reward -= 50.0f;
             enemies_changed = true;
-        }
-    }
+            return true;
+        });
+    enemies_.erase(reached_base_end, enemies_.end());
 
     if (base_hp_ <= 0) {
         game_over_ = true;
@@ -608,6 +607,7 @@ StepResult TDEngine::step_time(float dt) {
                 if (!use_bucket_targeting) {
                     for (int enemy_index = 0; enemy_index < enemy_count; ++enemy_index) {
                         Enemy& enemy = enemies_[enemy_index];
+                        if (enemy.hp <= 0.0f) continue;
                         float dx = enemy.x - static_cast<float>(tower.x);
                         float dy = enemy.y - static_cast<float>(tower.y);
                         float dist2 = dx * dx + dy * dy;
@@ -628,6 +628,7 @@ StepResult TDEngine::step_time(float dt) {
                         int c = candidate_cells.pop_lsb();
                         for (int enemy_index = bucket_head[c]; enemy_index >= 0; enemy_index = enemy_bucket_next_scratch_[enemy_index]) {
                             Enemy& enemy = enemies_[enemy_index];
+                            if (enemy.hp <= 0.0f) continue;
                             float dx = enemy.x - static_cast<float>(tower.x);
                             float dy = enemy.y - static_cast<float>(tower.y);
                             float dist2 = dx * dx + dy * dy;
@@ -642,8 +643,8 @@ StepResult TDEngine::step_time(float dt) {
                     // Extremely defensive fallback for any future off-board/interpolated enemy states.
                     if (best_index < 0 && has_offboard_enemy) {
                         for (int enemy_index = 0; enemy_index < enemy_count; ++enemy_index) {
-                            if (enemy_rounded_cell(enemies_[enemy_index]) >= 0) continue;
                             Enemy& enemy = enemies_[enemy_index];
+                            if (enemy.hp <= 0.0f || enemy_rounded_cell(enemy) >= 0) continue;
                             float dx = enemy.x - static_cast<float>(tower.x);
                             float dy = enemy.y - static_cast<float>(tower.y);
                             float dist2 = dx * dx + dy * dy;
@@ -662,6 +663,7 @@ StepResult TDEngine::step_time(float dt) {
                 if (tower.aoe_radius > 0.0f) {
                     const float aoe2 = tower.aoe_radius * tower.aoe_radius;
                     for (auto& e : enemies_) {
+                        if (e.hp <= 0.0f) continue;
                         float dx = e.x - best_target->x;
                         float dy = e.y - best_target->y;
                         ++perf_.tower_aoe_distance_checks;
@@ -681,21 +683,19 @@ StepResult TDEngine::step_time(float dt) {
         }
     }
 
-    std::vector<int> dead_ids;
-    for (const auto& e : enemies_) {
-        if (e.hp <= 0.0f) dead_ids.push_back(e.id);
-    }
-
-    for (int id : dead_ids) {
-        auto it = std::find_if(enemies_.begin(), enemies_.end(), [id](const Enemy& e) { return e.id == id; });
-        if (it != enemies_.end()) {
-            money_ += it->reward;
-            step_reward += it->reward;
-            enemies_.erase(it);
-            mark_money_changed();
+    bool money_changed = false;
+    auto dead_end = std::remove_if(
+        enemies_.begin(), enemies_.end(),
+        [&](const Enemy& enemy) {
+            if (enemy.hp > 0.0f) return false;
+            money_ += enemy.reward;
+            step_reward += enemy.reward;
+            money_changed = true;
             enemies_changed = true;
-        }
-    }
+            return true;
+        });
+    enemies_.erase(dead_end, enemies_.end());
+    if (money_changed) mark_money_changed();
 
     if (enemies_.empty() && enemies_to_spawn_.empty()) {
         wave_ += 1;
