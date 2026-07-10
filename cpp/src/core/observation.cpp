@@ -7,33 +7,53 @@ namespace tdmz {
 
 namespace {
 
-constexpr uint64_t kInvalidVersion = ~0ULL;
 constexpr int kObsPlane = kBoardW * kBoardH;
+constexpr uint64_t kFnvOffset = 1469598103934665603ULL;
+constexpr uint64_t kFnvPrime = 1099511628211ULL;
 
 inline int obs_index(int c, int y, int x) {
     return (c * kBoardH + y) * kBoardW + x;
 }
 
+uint64_t static_tower_signature(const TDEngine& env) {
+    uint64_t h = kFnvOffset;
+    auto mix = [&](uint64_t value) {
+        h ^= value;
+        h *= kFnvPrime;
+    };
+
+    mix(static_cast<uint64_t>(env.towers().size()));
+    for (const auto& tower : env.towers()) {
+        mix(static_cast<uint64_t>(tower.x));
+        mix(static_cast<uint64_t>(tower.y));
+        mix(static_cast<uint64_t>(static_cast<int>(tower.type)));
+        mix(static_cast<uint64_t>(tower.level));
+    }
+    return h;
+}
+
 struct ObservationStaticCache {
-    const TDEngine* env = nullptr;
-    uint64_t grid_version = kInvalidVersion;
-    uint64_t tower_version = kInvalidVersion;
+    bool valid = false;
+    Bitboard128 blocked{};
+    uint64_t tower_signature = 0;
     Observation static_obs;
 };
 
 thread_local ObservationStaticCache g_static_cache;
 
 const Observation& get_static_observation_channels(const TDEngine& env) {
-    if (g_static_cache.env == &env &&
-        g_static_cache.grid_version == env.grid_version() &&
-        g_static_cache.tower_version == env.tower_version() &&
+    const Bitboard128 blocked = env.blocked_bitboard();
+    const uint64_t tower_signature = static_tower_signature(env);
+    if (g_static_cache.valid &&
+        g_static_cache.blocked == blocked &&
+        g_static_cache.tower_signature == tower_signature &&
         g_static_cache.static_obs.size() == OBS_CHANNELS * kObsPlane) {
         return g_static_cache.static_obs;
     }
 
-    g_static_cache.env = &env;
-    g_static_cache.grid_version = env.grid_version();
-    g_static_cache.tower_version = env.tower_version();
+    g_static_cache.valid = true;
+    g_static_cache.blocked = blocked;
+    g_static_cache.tower_signature = tower_signature;
     g_static_cache.static_obs.assign(OBS_CHANNELS * kObsPlane, 0.0f);
 
     auto at = [&](int c, int y, int x) -> float& {
@@ -140,7 +160,8 @@ Observation make_observation_v1(const TDEngine& env) {
     for (const auto& tower : env.towers()) {
         int x = tower.x;
         int y = tower.y;
-        at(CH_TOWER_COOLDOWN, y, x) = tower.cooldown / tower.cooldown_max;
+        const float cooldown_ratio = tower.cooldown_max > 0.0f ? tower.cooldown / tower.cooldown_max : 0.0f;
+        at(CH_TOWER_COOLDOWN, y, x) = std::clamp(cooldown_ratio, 0.0f, 1.0f);
     }
 
     for (const auto& enemy : env.enemies()) {
