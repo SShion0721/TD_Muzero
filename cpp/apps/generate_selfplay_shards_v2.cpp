@@ -32,6 +32,7 @@ struct GeneratorConfig {
     int simulations = 32;
     int latent_top_k = 16;
     int max_nodes = 8192;
+    int recurrent_batch_size = 1;
     int writer_queue_size = 8;
     uint64_t seed = 0;
     bool budgeted = false;
@@ -124,20 +125,21 @@ void print_help(const char* executable) {
     std::cout
         << "Usage: " << executable << " [options]\n\n"
         << "Options:\n"
-        << "  --games N          Total self-play games. Default: 64\n"
-        << "  --workers N        Actor workers. Default: min(8, hardware concurrency)\n"
-        << "  --sims N           MCTS simulations per move. Default: 32\n"
-        << "  --max-steps N      Maximum steps per game. Default: 64\n"
-        << "  --latent-top-k N   Latent expansion top-k. Default: 16\n"
-        << "  --max-nodes N      MCTS node capacity. Default: 8192\n"
-        << "  --seed N           First game seed. Default: 0\n"
-        << "  --prefix PATH      Output prefix. Default: data/selfplay/train\n"
-        << "  --budgeted         Enable budgeted waves\n"
-        << "  --fixed            Use fixed waves\n"
-        << "  --async-write      Use one bounded writer queue per actor. Default\n"
-        << "  --sync-write       Serialize in the actor thread\n"
-        << "  --writer-queue N   Async queue capacity. Default: 8\n"
-        << "  --help             Show this help\n";
+        << "  --games N                  Total self-play games. Default: 64\n"
+        << "  --workers N                Actor workers. Default: min(8, hardware concurrency)\n"
+        << "  --sims N                   MCTS simulations per move. Default: 32\n"
+        << "  --max-steps N              Maximum steps per game. Default: 64\n"
+        << "  --latent-top-k N           Latent expansion top-k. Default: 16\n"
+        << "  --max-nodes N              MCTS node capacity. Default: 8192\n"
+        << "  --recurrent-batch-size N   Unique leaves per recurrent call. Default: 1\n"
+        << "  --seed N                   First game seed. Default: 0\n"
+        << "  --prefix PATH              Output prefix. Default: data/selfplay/train\n"
+        << "  --budgeted                 Enable budgeted waves\n"
+        << "  --fixed                    Use fixed waves\n"
+        << "  --async-write              Use one bounded writer queue per actor. Default\n"
+        << "  --sync-write               Serialize in the actor thread\n"
+        << "  --writer-queue N           Async queue capacity. Default: 8\n"
+        << "  --help                     Show this help\n";
 }
 
 GeneratorConfig parse_args(int argc, char** argv) {
@@ -155,6 +157,7 @@ GeneratorConfig parse_args(int argc, char** argv) {
         else if (arg == "--max-steps") config.max_steps = parse_int_arg(args, i, "--max-steps");
         else if (arg == "--latent-top-k") config.latent_top_k = parse_int_arg(args, i, "--latent-top-k");
         else if (arg == "--max-nodes") config.max_nodes = parse_int_arg(args, i, "--max-nodes");
+        else if (arg == "--recurrent-batch-size") config.recurrent_batch_size = parse_int_arg(args, i, "--recurrent-batch-size");
         else if (arg == "--writer-queue") config.writer_queue_size = parse_int_arg(args, i, "--writer-queue");
         else if (arg == "--seed") config.seed = parse_u64_arg(args, i, "--seed");
         else if (arg == "--prefix") config.prefix = parse_string_arg(args, i, "--prefix");
@@ -176,6 +179,7 @@ GeneratorConfig parse_args(int argc, char** argv) {
     if (config.simulations <= 0) throw std::runtime_error("--sims must be positive");
     if (config.latent_top_k <= 0) throw std::runtime_error("--latent-top-k must be positive");
     if (config.max_nodes <= 0) throw std::runtime_error("--max-nodes must be positive");
+    if (config.recurrent_batch_size <= 0) throw std::runtime_error("--recurrent-batch-size must be positive");
     if (config.writer_queue_size <= 0) throw std::runtime_error("--writer-queue must be positive");
     config.workers = std::min(config.workers, config.games);
     return config;
@@ -212,6 +216,7 @@ void generate_worker_games(
     selfplay.mcts.num_simulations = config.simulations;
     selfplay.mcts.latent_top_k = config.latent_top_k;
     selfplay.mcts.max_nodes = config.max_nodes;
+    selfplay.mcts.recurrent_batch_size = config.recurrent_batch_size;
     selfplay.save_observations = true;
     selfplay.save_legal_mask = true;
 
@@ -311,6 +316,7 @@ void write_index_json(
     out << "  \"simulations_per_move\": " << config.simulations << ",\n";
     out << "  \"latent_top_k\": " << config.latent_top_k << ",\n";
     out << "  \"max_nodes\": " << config.max_nodes << ",\n";
+    out << "  \"recurrent_batch_size\": " << config.recurrent_batch_size << ",\n";
     out << "  \"seed_start\": " << config.seed << ",\n";
     out << "  \"total_steps\": " << total_steps << ",\n";
     out << "  \"total_simulations\": " << total_simulations << ",\n";
@@ -361,6 +367,7 @@ void print_summary(
     std::cout << std::fixed << std::setprecision(6)
               << "{\"index\":\"" << json_escape(index_path) << "\""
               << ",\"replay_format_version\":" << kReplayBinaryFormatVersion
+              << ",\"recurrent_batch_size\":" << config.recurrent_batch_size
               << ",\"budgeted\":" << (config.budgeted ? "true" : "false")
               << ",\"async_write\":" << (config.async_write ? "true" : "false")
               << ",\"workers\":" << config.workers
