@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.14)
 project(TDMuZero LANGUAGES CXX)
 
 option(TDMZ_ENABLE_TORCH "Build LibTorch network components" OFF)
+option(TDMZ_BUILD_ENGINE_DEBUG_GUI "Build the Windows engine debug GUI" ON)
 
 set(TDMZ_CORE_SOURCES
     src/core/action.cpp
@@ -73,3 +74,9 @@ tdmz_add_core_app(bench_batch_sampler apps/bench_batch_sampler.cpp)
 tdmz_add_core_app(bench_mcts apps/bench_mcts.cpp)
 tdmz_add_core_app(generate_selfplay_dummy apps/generate_selfplay_dummy.cpp)
 tdmz_add_core_app(generate_selfplay_shards apps/generate_selfplay_shards.cpp)
+
+if(WIN32 AND TDMZ_BUILD_ENGINE_DEBUG_GUI)
+    add_executable(tdmz_engine_debug_gui WIN32 apps/engine_debug_gui_win32.cpp)
+    target_compile_features(tdmz_engine_debug_gui PRIVATE cxx_std_17)
+    target_link_libraries(tdmz_engine_debug_gui PRIVATE tdmz_core user32 gdi32)
+endif()
