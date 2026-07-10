@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -44,10 +45,12 @@ private:
     std::string path_;
     std::ifstream in_;
     std::vector<uint64_t> offsets_;
+    uint64_t file_size_ = 0;
 };
 
 // Streaming shard writer for production self-play generation.
-// This avoids keeping all generated games in RAM before writing a shard.
+// Data is written to a temporary file in the destination directory and published
+// only after the complete offset table and payload have been flushed successfully.
 class BinaryShardWriter {
 public:
     BinaryShardWriter(const std::string& path, size_t expected_history_count);
@@ -65,11 +68,19 @@ public:
 
 private:
     std::string path_;
+    std::string temp_path_;
     size_t expected_history_count_ = 0;
     size_t written_count_ = 0;
     bool closed_ = true;
     std::ofstream out_;
     std::vector<uint64_t> offsets_;
+};
+
+enum class AsyncBinaryShardWriterState {
+    Open,
+    Closing,
+    Closed,
+    Failed,
 };
 
 // Asynchronous shard writer for actor-style self-play generation.
@@ -94,6 +105,7 @@ public:
     size_t expected_history_count() const;
     size_t enqueued_count() const;
     size_t max_queue_size() const;
+    AsyncBinaryShardWriterState state() const;
     bool closed() const;
 
 private:
