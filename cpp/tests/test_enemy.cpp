@@ -2,6 +2,7 @@
 #include <cmath>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -99,6 +100,19 @@ void test_enemy_stops_at_path_end() {
     CHECK_CLOSE(enemy.target_y, enemy.y, 1e-5f);
 }
 
+void test_enemy_rejects_invalid_dt() {
+    Enemy enemy(6, 0.0f, 0.0f, 100.0f, 1.0f, 1);
+    bool negative = false;
+    bool nan = false;
+    bool infinity = false;
+    try { enemy.step(-1.0f); } catch (const std::invalid_argument&) { negative = true; }
+    try { enemy.step(std::numeric_limits<float>::quiet_NaN()); } catch (const std::invalid_argument&) { nan = true; }
+    try { enemy.step(std::numeric_limits<float>::infinity()); } catch (const std::invalid_argument&) { infinity = true; }
+    CHECK_TRUE(negative);
+    CHECK_TRUE(nan);
+    CHECK_TRUE(infinity);
+}
+
 } // namespace
 
 int main() {
@@ -108,6 +122,7 @@ int main() {
         test_slow_expiry_splits_one_tick();
         test_set_path_resets_cursor();
         test_enemy_stops_at_path_end();
+        test_enemy_rejects_invalid_dt();
         std::cout << "Enemy movement tests passed!" << std::endl;
         return 0;
     } catch (const std::exception& e) {
