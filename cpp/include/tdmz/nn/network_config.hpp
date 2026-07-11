@@ -12,7 +12,8 @@ struct NetworkConfig {
 
     int latent_channels = 32;
     int hidden_channels = 64;
-    int action_embedding_dim = 16;
+    int action_planes = kSpatialActionPlanes;
+    int policy_planes = kSpatialPolicyPlanes;
 
     int value_dim = 1;
     int reward_dim = 1;
