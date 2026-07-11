@@ -60,33 +60,43 @@ inline double sample_observation(const Observation& obs) {
     return sum;
 }
 
-BenchResult bench_static_cached(const std::string& name, bool budgeted, int iterations) {
+BenchResult bench_static_cached(const std::string& name, bool budgeted, int iterations, bool reuse_buffer) {
     TDEngine env(11, 11, 7, budgeted);
     seed_scripted_towers(env);
     env.step_wait(12);
 
-    // Warm the static observation cache and any lazy engine caches.
-    volatile double warm = sample_observation(make_observation_v1(env));
+    Observation buffer;
+    if (reuse_buffer) {
+        make_observation_v1_into(env, buffer);
+    } else {
+        buffer = make_observation_v1(env);
+    }
+    volatile double warm = sample_observation(buffer);
     (void)warm;
 
     double checksum = 0.0;
     auto start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < iterations; ++i) {
-        Observation obs = make_observation_v1(env);
-        checksum += sample_observation(obs);
+        if (reuse_buffer) {
+            make_observation_v1_into(env, buffer);
+            checksum += sample_observation(buffer);
+        } else {
+            Observation obs = make_observation_v1(env);
+            checksum += sample_observation(obs);
+        }
     }
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> diff = end - start;
     return {name, iterations, diff.count(), checksum};
 }
 
-BenchResult bench_dynamic_steps(const std::string& name, bool budgeted, int iterations) {
+BenchResult bench_dynamic_steps(const std::string& name, bool budgeted, int iterations, bool reuse_buffer) {
     TDEngine env(11, 11, 11, budgeted);
+    Observation buffer;
+    if (reuse_buffer) make_observation_v1_into(env, buffer);
+    else (void)make_observation_v1(env);
+
     double checksum = 0.0;
-
-    // Warm once outside the timer.
-    (void)make_observation_v1(env);
-
     auto start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < iterations; ++i) {
         if (env.game_over()) {
@@ -94,8 +104,13 @@ BenchResult bench_dynamic_steps(const std::string& name, bool budgeted, int iter
         }
         maybe_scripted_build(env);
         env.step_wait(1);
-        Observation obs = make_observation_v1(env);
-        checksum += sample_observation(obs);
+        if (reuse_buffer) {
+            make_observation_v1_into(env, buffer);
+            checksum += sample_observation(buffer);
+        } else {
+            Observation obs = make_observation_v1(env);
+            checksum += sample_observation(obs);
+        }
     }
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> diff = end - start;
@@ -116,18 +131,22 @@ void print_result(const BenchResult& r) {
 } // namespace
 
 int main() {
-    // Measure steady-state observation construction, not one-time static table setup.
     (void)board_tables();
     {
         TDEngine warmup(11, 11, 999);
         (void)warmup.legal_actions();
-        (void)make_observation_v1(warmup);
+        Observation buffer;
+        make_observation_v1_into(warmup, buffer);
     }
 
-    print_result(bench_static_cached("fixed_static_cached", false, 50000));
-    print_result(bench_static_cached("budgeted_static_cached", true, 50000));
-    print_result(bench_dynamic_steps("fixed_dynamic_steps", false, 10000));
-    print_result(bench_dynamic_steps("budgeted_dynamic_steps", true, 10000));
+    print_result(bench_static_cached("fixed_static_allocating", false, 50000, false));
+    print_result(bench_static_cached("fixed_static_reused", false, 50000, true));
+    print_result(bench_static_cached("budgeted_static_allocating", true, 50000, false));
+    print_result(bench_static_cached("budgeted_static_reused", true, 50000, true));
+    print_result(bench_dynamic_steps("fixed_dynamic_allocating", false, 10000, false));
+    print_result(bench_dynamic_steps("fixed_dynamic_reused", false, 10000, true));
+    print_result(bench_dynamic_steps("budgeted_dynamic_allocating", true, 10000, false));
+    print_result(bench_dynamic_steps("budgeted_dynamic_reused", true, 10000, true));
 
     return 0;
 }
