@@ -27,7 +27,8 @@ public:
     // Preferred root API. The environment supplies one exact state-dependent
     // mask over the full action space; invalid actions are never expanded and
     // therefore receive exactly zero prior, visits, and policy target mass.
-    RootSearchOutput search_single(
+    // The distinct name avoids ambiguous initializer-list overload resolution.
+    RootSearchOutput search_single_masked(
         INetworkEvaluator& net,
         const std::vector<float>& observation,
         const std::vector<uint8_t>& legal_mask
