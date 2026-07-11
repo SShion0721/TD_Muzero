@@ -43,6 +43,21 @@ void test_selfplay_dummy_history() {
     }
 }
 
+void test_external_environment_seed_is_authoritative() {
+    SelfPlayConfig cfg;
+    cfg.seed = 7;
+    cfg.max_steps = 1;
+    cfg.mcts.num_simulations = 2;
+    cfg.mcts.latent_top_k = 2;
+    cfg.mcts.max_nodes = 2048;
+
+    TDEngine env(11, 11, 99);
+    DummyNetwork net;
+    SelfPlayRunner runner(cfg);
+    const auto history = runner.run(env, net);
+    CHECK_TRUE(history.seed == 99);
+}
+
 void test_selfplay_jsonl_writer() {
     SelfPlayConfig cfg;
     cfg.seed = 3;
@@ -73,6 +88,7 @@ void test_selfplay_jsonl_writer() {
 
 int main() {
     test_selfplay_dummy_history();
+    test_external_environment_seed_is_authoritative();
     test_selfplay_jsonl_writer();
     std::cout << "Self-play tests passed!" << std::endl;
     return 0;
