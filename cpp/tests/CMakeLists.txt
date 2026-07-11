@@ -6,6 +6,10 @@ add_executable(test_enemy test_enemy.cpp)
 target_link_libraries(test_enemy tdmz_core)
 add_test(NAME test_enemy COMMAND test_enemy)
 
+add_executable(test_action_mask test_action_mask.cpp)
+target_link_libraries(test_action_mask tdmz_core)
+add_test(NAME test_action_mask COMMAND test_action_mask)
+
 add_executable(test_board_tables test_board_tables.cpp)
 target_link_libraries(test_board_tables tdmz_core)
 add_test(NAME test_board_tables COMMAND test_board_tables)
