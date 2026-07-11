@@ -29,7 +29,7 @@ Validated gates:
 
 ## Phase B — spatial action and prediction semantics
 
-Status: implemented; local validation required after pulling the latest commits.
+Status: completed and validated.
 
 1. Replace the four broadcast action scalars with seven spatial action planes:
    four build types, upgrade, sell, and wait.
@@ -39,20 +39,52 @@ Status: implemented; local validation required after pulling the latest commits.
 4. Keep Value globally pooled.
 5. Increment network architecture version to 3 and checkpoint manifest version to 2.
 
-Implemented gates:
+Validated gates:
 
 - exhaustive flat-action/spatial-plane checks for all 727 actions;
 - local target-cell one-hot encoding, with a dedicated full wait plane;
 - exact channel-major policy/legality flattening into the existing 727 IDs;
 - unchanged public action-space ABI;
-- updated checkpoint metadata for `action_planes` and `policy_planes`.
+- updated checkpoint metadata for `action_planes` and `policy_planes`;
+- normal suite passed 21/21;
+- LibTorch suite passed 24/24;
+- `test_network_shape`, `test_mcts_libtorch_smoke`, and `test_selfplay_torch` passed;
+- Observation V2 allocating/reused checksums remained identical.
 
-Validation still required:
+## Pre-Phase C semantic hardening
 
-- focused normal tests;
-- LibTorch network shape and smoke tests;
-- full normal and LibTorch CTest suites;
-- Golden Trace check.
+### Terminal absorption
+
+Status: implemented; local validation required.
+
+Completed behavior:
+
+- terminal `step_action()` returns `{0, true}` before decoding or mutation;
+- terminal `step_wait()` and `step_time()` do not advance time or repeat rewards;
+- build, upgrade, sell, and wave-mode mutation are disabled after terminal;
+- terminal legal actions are exactly Wait1, preserving the non-empty mask contract;
+- environment rule version incremented to 4;
+- regression test snapshots all public engine state and verifies repeated terminal calls
+  are exact no-ops;
+- the former monolithic engine implementation was split into state, board, action, and
+  tick translation units without changing the public API.
+
+Validation gate:
+
+- focused timing/checkpoint tests pass;
+- complete normal and LibTorch CTest suites pass;
+- Golden Trace remains unchanged for traces that do not act after terminal.
+
+### Remaining provenance fence
+
+Status: next.
+
+1. Add explicit fixed/budgeted wave-mode provenance to generated replay indexes.
+2. Reject mixed wave modes in one training dataset.
+3. Prevent runtime wave-mode changes once an episode has begun.
+4. Make direct transition-shard dataset construction enforce current observation,
+   policy, and legal-mask dimensions even without an index manifest.
+5. Add rejection tests for old 20-channel direct shards and mixed wave modes.
 
 ## Phase C — legality-aware evaluator path
 
@@ -114,7 +146,7 @@ Gate:
 
 ## Phase F — exploration
 
-Status: blocked by Phases B–E.
+Status: blocked by Phases C–E.
 
 Only after Phases A–E:
 
@@ -131,26 +163,24 @@ Gate:
 - invalid action count remains zero;
 - evaluation mode remains deterministic.
 
-## Audit blockers recorded before Phase C/D
+## Remaining audit blockers before training
 
-The 2026-07-12 static audit found additional issues that must be resolved before training:
-
-1. terminal engine states should be fully absorbing for direct mutation APIs;
-2. direct transition-shard construction must enforce current tensor dimensions even
+1. direct transition-shard construction must enforce current tensor dimensions even
    without an index manifest;
-3. fixed-wave and budgeted-wave datasets need explicit provenance and must not be mixed;
-4. replay targets remain single-step and `root_value(t)` is not a valid final value label;
-5. terminal and truncated episodes are still conflated;
-6. latent-node legality is unavailable until Phase C.
+2. fixed-wave and budgeted-wave datasets need explicit provenance and must not be mixed;
+3. replay targets remain single-step and `root_value(t)` is not a valid final value label;
+4. terminal and truncated episodes are still conflated;
+5. latent-node legality is unavailable until Phase C.
 
-Already fixed during the audit:
+Already fixed:
 
-- invalid tower types now throw instead of creating zero-cost towers;
+- invalid tower types throw instead of creating zero-cost towers;
 - unsupported multi-second wait actions are rejected by the 727-action encoder;
 - enemy movement rejects negative and non-finite time inputs;
 - DefenseCapacity shot counting follows the engine's half-open cooldown interval;
 - externally supplied self-play environments record their actual seed;
-- action and pathfinding headers now declare their dependencies explicitly.
+- action and pathfinding headers declare their dependencies explicitly;
+- terminal states are fully absorbing across public mutation and stepping APIs.
 
 ## Validation discipline
 
