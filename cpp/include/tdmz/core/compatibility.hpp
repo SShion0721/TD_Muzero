@@ -12,11 +12,20 @@ inline constexpr const char* kReplayIndexFormat = "tdmz_selfplay_shard_index";
 inline constexpr uint32_t kReplayIndexVersion = 2;
 inline constexpr uint32_t kReplayBinaryFormatVersion = 2;
 inline constexpr uint32_t kLegacyReplayBinaryFormatVersion = 1;
-inline constexpr uint32_t kEnvironmentRuleVersion = 1;
-inline constexpr uint32_t kObservationSchemaVersion = 1;
+
+// Rule v2 includes continuous enemy movement/cooldowns, terminal-tick time,
+// dead-target filtering, enemy-occupied build masking, and cursor queues.
+inline constexpr uint32_t kEnvironmentRuleVersion = 2;
+
+// Observation v2 adds Markov-critical pending-wave data, absolute enemy state,
+// continuous-position splatting, route direction/distance, and bounded scaling.
+inline constexpr uint32_t kObservationSchemaVersion = 2;
 inline constexpr uint32_t kActionSpaceVersion = 1;
 inline constexpr uint32_t kRewardTransformVersion = 1;
-inline constexpr uint32_t kNetworkArchitectureVersion = 1;
+
+// Architecture v2 consumes the 40-channel observation schema. The later
+// spatial policy/action redesign must increment this version again.
+inline constexpr uint32_t kNetworkArchitectureVersion = 2;
 inline constexpr uint32_t kCheckpointManifestVersion = 1;
 inline constexpr int kObservationSize = OBS_CHANNELS * kBoardH * kBoardW;
 
