@@ -43,6 +43,7 @@ TDEngine::TDEngine(int width, int height, uint64_t seed, bool use_budgeted_waves
 void TDEngine::invalidate_all_caches() {
     placeable_cache_valid_ = false;
     legal_cache_valid_ = false;
+    enemy_occupancy_cache_valid_ = false;
     base_distance_cache_valid_ = false;
 }
 
@@ -65,6 +66,8 @@ void TDEngine::mark_money_changed() {
 
 void TDEngine::mark_enemies_changed() {
     ++enemy_version_;
+    legal_cache_valid_ = false;
+    enemy_occupancy_cache_valid_ = false;
 }
 
 void TDEngine::mark_wave_changed() {
@@ -269,6 +272,25 @@ std::vector<std::pair<int,int>> TDEngine::find_path(int sx, int sy, int ex, int 
     return find_shortest_path(sx, sy, ex, ey, grid_);
 }
 
+Bitboard128 TDEngine::enemy_occupancy_bitboard() const {
+    if (enemy_occupancy_cache_valid_ && enemy_occupancy_version_ == enemy_version_) {
+        return cached_enemy_occupancy_;
+    }
+
+    ++perf_.enemy_occupancy_recompute;
+    Bitboard128 occupancy = Bitboard128::zero();
+    for (const auto& enemy : enemies_) {
+        if (enemy.hp <= 0.0f) continue;
+        const int cell = enemy_rounded_cell(enemy);
+        if (cell >= 0) occupancy.set(cell);
+    }
+
+    cached_enemy_occupancy_ = occupancy;
+    enemy_occupancy_version_ = enemy_version_;
+    enemy_occupancy_cache_valid_ = true;
+    return cached_enemy_occupancy_;
+}
+
 bool TDEngine::in_bounds(int x, int y) const {
     return x >= 0 && x < width_ && y >= 0 && y < height_;
 }
@@ -278,6 +300,7 @@ bool TDEngine::can_place_tower(int x, int y, TowerType type) const {
     if (grid_[y][x] != 0) return false;
     if (x == spawn_x_ && y == spawn_y_) return false;
     if (x == base_x_ && y == base_y_) return false;
+    if (enemy_occupancy_bitboard().test(cell_id(x, y))) return false;
 
     auto stats = tower_stats(type);
     if (money_ < stats.cost) return false;
@@ -432,7 +455,8 @@ std::vector<int> TDEngine::legal_actions() const {
     if (legal_cache_valid_ &&
         legal_grid_version_ == grid_version_ &&
         legal_tower_version_ == tower_version_ &&
-        legal_money_version_ == money_version_) {
+        legal_money_version_ == money_version_ &&
+        legal_enemy_version_ == enemy_version_) {
         return cached_legal_actions_;
     }
 
@@ -441,6 +465,7 @@ std::vector<int> TDEngine::legal_actions() const {
     const auto& tables = board_tables();
     std::vector<int> actions;
     auto placeable = compute_placeable_mask();
+    const Bitboard128 enemy_occupancy = enemy_occupancy_bitboard();
 
     for (int t = 0; t < kBuildTypes; ++t) {
         auto type = static_cast<TowerType>(t);
@@ -448,7 +473,7 @@ std::vector<int> TDEngine::legal_actions() const {
             for (int c = 0; c < kCells; ++c) {
                 int x = tables.x[c];
                 int y = tables.y[c];
-                if (placeable[y][x]) {
+                if (placeable[y][x] && !enemy_occupancy.test(c)) {
                     actions.push_back(tables.build_action[t][c]);
                 }
             }
@@ -469,6 +494,7 @@ std::vector<int> TDEngine::legal_actions() const {
     legal_grid_version_ = grid_version_;
     legal_tower_version_ = tower_version_;
     legal_money_version_ = money_version_;
+    legal_enemy_version_ = enemy_version_;
     legal_cache_valid_ = true;
     return cached_legal_actions_;
 }
@@ -656,7 +682,6 @@ StepResult TDEngine::step_one_tick() {
                         }
                     }
 
-                    // Extremely defensive fallback for any future off-board/interpolated enemy states.
                     if (best_index < 0 && has_offboard_enemy) {
                         for (int enemy_index = 0; enemy_index < enemy_count; ++enemy_index) {
                             Enemy& enemy = enemies_[enemy_index];
@@ -675,8 +700,6 @@ StepResult TDEngine::step_one_tick() {
             }
 
             if (best_index < 0) {
-                // A ready tower with no target stays ready instead of banking
-                // fictitious attacks for a later tick.
                 break;
             }
 
