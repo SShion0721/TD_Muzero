@@ -6,6 +6,10 @@ add_executable(test_enemy test_enemy.cpp)
 target_link_libraries(test_enemy tdmz_core)
 add_test(NAME test_enemy COMMAND test_enemy)
 
+add_executable(test_timing_semantics test_timing_semantics.cpp)
+target_link_libraries(test_timing_semantics tdmz_core)
+add_test(NAME test_timing_semantics COMMAND test_timing_semantics)
+
 add_executable(test_action_mask test_action_mask.cpp)
 target_link_libraries(test_action_mask tdmz_core)
 add_test(NAME test_action_mask COMMAND test_action_mask)
