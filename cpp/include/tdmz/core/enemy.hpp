@@ -1,6 +1,7 @@
 #pragma once
-#include <vector>
+#include <cstddef>
 #include <utility>
+#include <vector>
 
 namespace tdmz {
 
@@ -16,15 +17,18 @@ struct Enemy {
     float y;
     float target_x;
     float target_y;
-    
+
     float hp;
     float max_hp;
     float speed;
     float base_speed;
     float slow_timer;
     int reward;
-    
+
+    // The path storage remains stable while path_cursor advances. Avoiding
+    // erase(path.begin()) removes an O(path_length) shift at every waypoint.
     std::vector<std::pair<int, int>> path;
+    std::size_t path_cursor = 0;
 
     Enemy(int id, float x, float y, float hp, float speed, int reward);
 
