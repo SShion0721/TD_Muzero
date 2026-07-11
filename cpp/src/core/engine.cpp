@@ -14,6 +14,7 @@ namespace tdmz {
 namespace {
 constexpr int kInf = 1000000000;
 constexpr int kBucketTargetingEnemyThreshold = 16;
+constexpr int kMaxTowerShotsPerTick = 64;
 
 int enemy_rounded_cell(const Enemy& enemy) {
     int ex = static_cast<int>(std::round(enemy.x));
@@ -578,6 +579,7 @@ StepResult TDEngine::step_one_tick() {
         game_over_ = true;
         if (enemies_changed) mark_enemies_changed();
         step_reward -= 1000.0f;
+        time_ += dt;
         return {step_reward, true};
     }
 
@@ -609,8 +611,10 @@ StepResult TDEngine::step_one_tick() {
     }
 
     for (auto& tower : towers_) {
-        tower.step(dt);
-        if (tower.can_shoot()) {
+        float remaining_dt = dt;
+        int shots_this_tick = 0;
+
+        while (tower.advance_until_ready(remaining_dt)) {
             int best_index = -1;
             float best_dist2 = 1e30f;
             const float range2 = tower.range * tower.range;
@@ -670,27 +674,36 @@ StepResult TDEngine::step_one_tick() {
                 }
             }
 
-            if (best_index >= 0) {
-                Enemy* best_target = &enemies_[best_index];
-                if (tower.aoe_radius > 0.0f) {
-                    const float aoe2 = tower.aoe_radius * tower.aoe_radius;
-                    for (auto& e : enemies_) {
-                        if (e.hp <= 0.0f) continue;
-                        float dx = e.x - best_target->x;
-                        float dy = e.y - best_target->y;
-                        ++perf_.tower_aoe_distance_checks;
-                        if (dx * dx + dy * dy <= aoe2) {
-                            e.hp -= tower.damage;
-                            e.apply_slow(tower.slow_factor, tower.slow_duration);
-                            enemies_changed = true;
-                        }
+            if (best_index < 0) {
+                // A ready tower with no target stays ready instead of banking
+                // fictitious attacks for a later tick.
+                break;
+            }
+
+            Enemy* best_target = &enemies_[best_index];
+            if (tower.aoe_radius > 0.0f) {
+                const float aoe2 = tower.aoe_radius * tower.aoe_radius;
+                for (auto& e : enemies_) {
+                    if (e.hp <= 0.0f) continue;
+                    float dx = e.x - best_target->x;
+                    float dy = e.y - best_target->y;
+                    ++perf_.tower_aoe_distance_checks;
+                    if (dx * dx + dy * dy <= aoe2) {
+                        e.hp -= tower.damage;
+                        e.apply_slow(tower.slow_factor, tower.slow_duration);
+                        enemies_changed = true;
                     }
-                } else {
-                    best_target->hp -= tower.damage;
-                    best_target->apply_slow(tower.slow_factor, tower.slow_duration);
-                    enemies_changed = true;
                 }
-                tower.shoot();
+            } else {
+                best_target->hp -= tower.damage;
+                best_target->apply_slow(tower.slow_factor, tower.slow_duration);
+                enemies_changed = true;
+            }
+
+            tower.shoot();
+            ++shots_this_tick;
+            if (shots_this_tick > kMaxTowerShotsPerTick) {
+                throw std::runtime_error("Tower exceeded the per-tick shot safety limit");
             }
         }
     }
