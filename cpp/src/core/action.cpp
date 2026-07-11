@@ -43,6 +43,9 @@ int encode_action(const Action& a) {
         return tables.sell_action[a.y * kBoardW + a.x];
     }
     if (a.type == ActionType::Wait1) {
+        if (a.wait_steps != 1) {
+            throw std::invalid_argument("Only the one-second wait action is encodable");
+        }
         return tables.wait_action;
     }
     throw std::invalid_argument("Invalid action type for encoding");
