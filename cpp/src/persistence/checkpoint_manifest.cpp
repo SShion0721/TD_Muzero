@@ -113,7 +113,8 @@ CheckpointManifest make_checkpoint_manifest(
     manifest.optimizer_state_present = optimizer_state_present;
     manifest.latent_channels = config.latent_channels;
     manifest.hidden_channels = config.hidden_channels;
-    manifest.action_embedding_dim = config.action_embedding_dim;
+    manifest.action_planes = config.action_planes;
+    manifest.policy_planes = config.policy_planes;
     manifest.value_dim = config.value_dim;
     manifest.reward_dim = config.reward_dim;
     return manifest;
@@ -149,7 +150,8 @@ void write_checkpoint_manifest_json(
         << (manifest.optimizer_state_present ? "true" : "false") << ",\n";
     out << "  \"latent_channels\": " << manifest.latent_channels << ",\n";
     out << "  \"hidden_channels\": " << manifest.hidden_channels << ",\n";
-    out << "  \"action_embedding_dim\": " << manifest.action_embedding_dim << ",\n";
+    out << "  \"action_planes\": " << manifest.action_planes << ",\n";
+    out << "  \"policy_planes\": " << manifest.policy_planes << ",\n";
     out << "  \"value_dim\": " << manifest.value_dim << ",\n";
     out << "  \"reward_dim\": " << manifest.reward_dim << "\n";
     out << "}\n";
@@ -185,7 +187,8 @@ CheckpointManifest read_checkpoint_manifest_json(const std::string& path) {
     manifest.optimizer_state_present = require_bool_field(text, "optimizer_state_present");
     manifest.latent_channels = require_int_field(text, "latent_channels");
     manifest.hidden_channels = require_int_field(text, "hidden_channels");
-    manifest.action_embedding_dim = require_int_field(text, "action_embedding_dim");
+    manifest.action_planes = require_int_field(text, "action_planes");
+    manifest.policy_planes = require_int_field(text, "policy_planes");
     manifest.value_dim = require_int_field(text, "value_dim");
     manifest.reward_dim = require_int_field(text, "reward_dim");
     return manifest;
@@ -203,7 +206,8 @@ void validate_checkpoint_manifest(
         "Checkpoint manifest");
     require_equal("latent_channels", manifest.latent_channels, expected_config.latent_channels);
     require_equal("hidden_channels", manifest.hidden_channels, expected_config.hidden_channels);
-    require_equal("action_embedding_dim", manifest.action_embedding_dim, expected_config.action_embedding_dim);
+    require_equal("action_planes", manifest.action_planes, expected_config.action_planes);
+    require_equal("policy_planes", manifest.policy_planes, expected_config.policy_planes);
     require_equal("value_dim", manifest.value_dim, expected_config.value_dim);
     require_equal("reward_dim", manifest.reward_dim, expected_config.reward_dim);
     if (require_optimizer_state && !manifest.optimizer_state_present) {
