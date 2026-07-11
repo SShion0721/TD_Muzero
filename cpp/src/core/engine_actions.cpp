@@ -1,6 +1,7 @@
 #include "tdmz/core/engine.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 #include <stdexcept>
 
@@ -61,7 +62,7 @@ std::vector<int> TDEngine::legal_actions() const {
 std::vector<uint8_t> TDEngine::legal_action_mask() const {
     std::vector<uint8_t> mask(kActionSpaceSize, 0);
     for (int action : legal_actions()) {
-        mask[static_cast<size_t>(action)] = 1;
+        mask[static_cast<std::size_t>(action)] = 1;
     }
     return mask;
 }
