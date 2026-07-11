@@ -67,9 +67,9 @@ BenchResult bench_static_cached(const std::string& name, bool budgeted, int iter
 
     Observation buffer;
     if (reuse_buffer) {
-        make_observation_v1_into(env, buffer);
+        make_observation_v2_into(env, buffer);
     } else {
-        buffer = make_observation_v1(env);
+        buffer = make_observation_v2(env);
     }
     volatile double warm = sample_observation(buffer);
     (void)warm;
@@ -78,10 +78,10 @@ BenchResult bench_static_cached(const std::string& name, bool budgeted, int iter
     auto start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < iterations; ++i) {
         if (reuse_buffer) {
-            make_observation_v1_into(env, buffer);
+            make_observation_v2_into(env, buffer);
             checksum += sample_observation(buffer);
         } else {
-            Observation obs = make_observation_v1(env);
+            Observation obs = make_observation_v2(env);
             checksum += sample_observation(obs);
         }
     }
@@ -93,8 +93,8 @@ BenchResult bench_static_cached(const std::string& name, bool budgeted, int iter
 BenchResult bench_dynamic_steps(const std::string& name, bool budgeted, int iterations, bool reuse_buffer) {
     TDEngine env(11, 11, 11, budgeted);
     Observation buffer;
-    if (reuse_buffer) make_observation_v1_into(env, buffer);
-    else (void)make_observation_v1(env);
+    if (reuse_buffer) make_observation_v2_into(env, buffer);
+    else (void)make_observation_v2(env);
 
     double checksum = 0.0;
     auto start = std::chrono::high_resolution_clock::now();
@@ -105,10 +105,10 @@ BenchResult bench_dynamic_steps(const std::string& name, bool budgeted, int iter
         maybe_scripted_build(env);
         env.step_wait(1);
         if (reuse_buffer) {
-            make_observation_v1_into(env, buffer);
+            make_observation_v2_into(env, buffer);
             checksum += sample_observation(buffer);
         } else {
-            Observation obs = make_observation_v1(env);
+            Observation obs = make_observation_v2(env);
             checksum += sample_observation(obs);
         }
     }
@@ -136,17 +136,17 @@ int main() {
         TDEngine warmup(11, 11, 999);
         (void)warmup.legal_actions();
         Observation buffer;
-        make_observation_v1_into(warmup, buffer);
+        make_observation_v2_into(warmup, buffer);
     }
 
-    print_result(bench_static_cached("fixed_static_allocating", false, 50000, false));
-    print_result(bench_static_cached("fixed_static_reused", false, 50000, true));
-    print_result(bench_static_cached("budgeted_static_allocating", true, 50000, false));
-    print_result(bench_static_cached("budgeted_static_reused", true, 50000, true));
-    print_result(bench_dynamic_steps("fixed_dynamic_allocating", false, 10000, false));
-    print_result(bench_dynamic_steps("fixed_dynamic_reused", false, 10000, true));
-    print_result(bench_dynamic_steps("budgeted_dynamic_allocating", true, 10000, false));
-    print_result(bench_dynamic_steps("budgeted_dynamic_reused", true, 10000, true));
+    print_result(bench_static_cached("fixed_static_v2_allocating", false, 50000, false));
+    print_result(bench_static_cached("fixed_static_v2_reused", false, 50000, true));
+    print_result(bench_static_cached("budgeted_static_v2_allocating", true, 50000, false));
+    print_result(bench_static_cached("budgeted_static_v2_reused", true, 50000, true));
+    print_result(bench_dynamic_steps("fixed_dynamic_v2_allocating", false, 10000, false));
+    print_result(bench_dynamic_steps("fixed_dynamic_v2_reused", false, 10000, true));
+    print_result(bench_dynamic_steps("budgeted_dynamic_v2_allocating", true, 10000, false));
+    print_result(bench_dynamic_steps("budgeted_dynamic_v2_reused", true, 10000, true));
 
     return 0;
 }
