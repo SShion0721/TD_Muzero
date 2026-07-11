@@ -52,6 +52,7 @@ public:
 
     const std::vector<Tower>& towers() const { return towers_; }
     const std::vector<Enemy>& enemies() const { return enemies_; }
+    const PendingSpawnQueue& pending_spawns() const { return enemies_to_spawn_; }
 
     int money() const { return money_; }
     int base_hp() const { return base_hp_; }
