@@ -1,7 +1,6 @@
 #include "tdmz/core/enemy.hpp"
 #include <algorithm>
 #include <cmath>
-#include <cstddef>
 
 namespace tdmz {
 
@@ -21,9 +20,10 @@ void Enemy::apply_slow(float factor, float duration) {
 
 void Enemy::set_path(const std::vector<std::pair<int, int>>& new_path) {
     path = new_path;
-    if (!path.empty()) {
-        target_x = static_cast<float>(path.front().first);
-        target_y = static_cast<float>(path.front().second);
+    path_cursor = 0;
+    if (path_cursor < path.size()) {
+        target_x = static_cast<float>(path[path_cursor].first);
+        target_y = static_cast<float>(path[path_cursor].second);
     } else {
         target_x = x;
         target_y = y;
@@ -38,10 +38,9 @@ void Enemy::step(float dt) {
     constexpr float kMoveEpsilon = 1e-6f;
 
     auto advance_distance = [&](float move_dist) {
-        std::size_t consumed = 0;
-        while (move_dist > kMoveEpsilon && consumed < path.size()) {
-            const float next_x = static_cast<float>(path[consumed].first);
-            const float next_y = static_cast<float>(path[consumed].second);
+        while (move_dist > kMoveEpsilon && path_cursor < path.size()) {
+            const float next_x = static_cast<float>(path[path_cursor].first);
+            const float next_y = static_cast<float>(path[path_cursor].second);
             const float dx = next_x - x;
             const float dy = next_y - y;
             const float dist = std::hypot(dx, dy);
@@ -49,7 +48,7 @@ void Enemy::step(float dt) {
             if (dist <= kMoveEpsilon) {
                 x = next_x;
                 y = next_y;
-                ++consumed;
+                ++path_cursor;
                 continue;
             }
 
@@ -57,7 +56,7 @@ void Enemy::step(float dt) {
                 x = next_x;
                 y = next_y;
                 move_dist = std::max(0.0f, move_dist - dist);
-                ++consumed;
+                ++path_cursor;
             } else {
                 x += (dx / dist) * move_dist;
                 y += (dy / dist) * move_dist;
@@ -65,12 +64,9 @@ void Enemy::step(float dt) {
             }
         }
 
-        if (consumed > 0) {
-            path.erase(path.begin(), path.begin() + static_cast<std::ptrdiff_t>(consumed));
-        }
-        if (!path.empty()) {
-            target_x = static_cast<float>(path.front().first);
-            target_y = static_cast<float>(path.front().second);
+        if (path_cursor < path.size()) {
+            target_x = static_cast<float>(path[path_cursor].first);
+            target_y = static_cast<float>(path[path_cursor].second);
         } else {
             target_x = x;
             target_y = y;
