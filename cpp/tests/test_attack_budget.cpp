@@ -1,5 +1,6 @@
 #include "tdmz/balance/attack_budget.hpp"
 #include <cmath>
+#include <exception>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -38,9 +39,15 @@ void test_empty_budget_is_wave_clamped() {
     CHECK_TRUE(r.boss_hp_cap == 0.0f);
 }
 
-void test_defense_increases_budget_when_unclamped() {
+void test_owned_defense_increases_budget_when_unclamped() {
     AttackBudgetConfig cfg;
     cfg.enable_wave_cap = false;
+
+    // Exclude spendable cash so this test isolates the capacity contributed by
+    // the already-owned tower. With spendable money enabled, buying a Basic
+    // converts 50 cash into exactly the same half-open 15-second capacity and
+    // equality is a valid result rather than a regression.
+    cfg.defense.include_spendable_money = false;
 
     TDEngine empty(11, 11, 0);
     TDEngine defended(11, 11, 0);
@@ -100,12 +107,17 @@ void test_negative_free_config() {
 }
 
 int main() {
-    test_wave_cap_formula_and_unlocks();
-    test_empty_budget_is_wave_clamped();
-    test_defense_increases_budget_when_unclamped();
-    test_virtual_base_hp_reduces_budget_when_unclamped();
-    test_ratio_caps();
-    test_negative_free_config();
-    std::cout << "Attack budget tests passed!" << std::endl;
-    return 0;
+    try {
+        test_wave_cap_formula_and_unlocks();
+        test_empty_budget_is_wave_clamped();
+        test_owned_defense_increases_budget_when_unclamped();
+        test_virtual_base_hp_reduces_budget_when_unclamped();
+        test_ratio_caps();
+        test_negative_free_config();
+        std::cout << "Attack budget tests passed!" << std::endl;
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << std::endl;
+        return 1;
+    }
 }
