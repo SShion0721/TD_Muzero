@@ -16,7 +16,7 @@ TowerStats tower_stats(TowerType type) {
         case TowerType::Slow:
             return {75, 2.0f, 3.0f, 1.0f, 0.0f, 0.4f, 2.0f};
     }
-    return {0, 0, 0, 0, 0, 0, 0};
+    throw std::invalid_argument("Invalid tower type");
 }
 
 Tower::Tower(int x, int y, TowerType type) : x(x), y(y), type(type) {
