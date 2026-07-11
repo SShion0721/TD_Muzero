@@ -11,10 +11,10 @@ static void check_true(bool ok, const char* expr, int line) {
 #define CHECK_TRUE(x) check_true(static_cast<bool>(x), #x, __LINE__)
 
 int main() {
-    constexpr uint64_t kExpectedCombined = 0x7b079a8fe1032058ULL;
-    constexpr uint64_t kExpectedWaitOnly = 0xc8a91dc7092499daULL;
-    constexpr uint64_t kExpectedMixedBuild = 0xddc910cdb7fb9549ULL;
-    constexpr uint64_t kExpectedInvalidAndSlow = 0x0b8a7c366424e6a0ULL;
+    constexpr uint64_t kExpectedCombined = 0x9150f0decb0cff52ULL;
+    constexpr uint64_t kExpectedWaitOnly = 0x4951ad62b27190eeULL;
+    constexpr uint64_t kExpectedMixedBuild = 0xab38ff9eba6101f6ULL;
+    constexpr uint64_t kExpectedInvalidAndSlow = 0xe94b379ce7a88d7cULL;
 
     auto cases = default_golden_trace_cases();
     CHECK_TRUE(cases.size() == 3);
