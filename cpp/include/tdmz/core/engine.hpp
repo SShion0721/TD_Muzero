@@ -20,6 +20,7 @@ struct EnginePerfCounters {
     uint64_t placeable_recompute = 0;
     uint64_t legal_recompute = 0;
     uint64_t base_distance_recompute = 0;
+    uint64_t enemy_occupancy_recompute = 0;
     uint64_t enemy_bucket_recompute = 0;
     uint64_t tower_candidate_cells = 0;
     uint64_t tower_exact_distance_checks = 0;
@@ -127,7 +128,12 @@ private:
     mutable uint64_t legal_grid_version_ = 0;
     mutable uint64_t legal_tower_version_ = 0;
     mutable uint64_t legal_money_version_ = 0;
+    mutable uint64_t legal_enemy_version_ = 0;
     mutable std::vector<int> cached_legal_actions_;
+
+    mutable bool enemy_occupancy_cache_valid_ = false;
+    mutable uint64_t enemy_occupancy_version_ = 0;
+    mutable Bitboard128 cached_enemy_occupancy_{};
 
     mutable bool base_distance_cache_valid_ = false;
     mutable uint64_t base_distance_grid_version_ = 0;
@@ -143,6 +149,7 @@ private:
 
     StepResult step_one_tick();
 
+    Bitboard128 enemy_occupancy_bitboard() const;
     void recompute_base_distance_cache() const;
     std::vector<std::pair<int,int>> path_to_base_from_cell(int start_cell) const;
 
