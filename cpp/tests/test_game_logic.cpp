@@ -291,10 +291,6 @@ void test_towers_do_not_retarget_dead_enemy() {
     CHECK_TRUE(!second.done);
     CHECK_TRUE(second.reward >= 10.0f);
     CHECK_TRUE(env.towers().size() == 2);
-    // A one-second Basic cooldown expires exactly at the tick boundary, so its
-    // ending cooldown is zero even though it fired. The Sniper's longer
-    // cooldown proves that the second tower acquired a different live target
-    // after the first tower killed its target.
     CHECK_TRUE(near_float(env.towers()[0].cooldown, 0.0f));
     CHECK_TRUE(env.towers()[1].cooldown > 0.0f);
 }
@@ -307,6 +303,66 @@ void test_build_legality_basics() {
     CHECK_TRUE(env.can_place_tower(1, 1, TowerType::Basic));
     CHECK_TRUE(env.place_tower(1, 1, TowerType::Basic));
     CHECK_TRUE(!env.can_place_tower(1, 1, TowerType::Basic));
+}
+
+void test_enemy_occupied_cells_are_not_buildable() {
+    TDEngine env(11, 11, 0);
+    CHECK_TRUE(!env.step_wait(1).done);
+    CHECK_TRUE(!env.enemies().empty());
+
+    const auto static_placeable = env.compute_placeable_mask();
+    const auto legal_mask = env.legal_action_mask();
+    bool checked_occupied_cell = false;
+
+    for (const auto& enemy : env.enemies()) {
+        const int x = static_cast<int>(std::round(enemy.x));
+        const int y = static_cast<int>(std::round(enemy.y));
+        if (!env.in_bounds(x, y)) continue;
+        if ((x == env.spawn_x() && y == env.spawn_y()) ||
+            (x == env.base_x() && y == env.base_y())) continue;
+        if (!static_placeable[y][x]) continue;
+
+        CHECK_TRUE(!env.can_place_tower(x, y, TowerType::Basic));
+        for (int t = 0; t < kBuildTypes; ++t) {
+            const auto action_type = static_cast<ActionType>(t);
+            const int action = encode_action(Action{action_type, x, y, 1});
+            CHECK_TRUE(legal_mask[static_cast<size_t>(action)] == 0u);
+        }
+        checked_occupied_cell = true;
+        break;
+    }
+
+    CHECK_TRUE(checked_occupied_cell);
+}
+
+void test_legal_cache_tracks_enemy_version() {
+    TDEngine env(11, 11, 0);
+    env.reset_perf_counters();
+
+    const auto legal1 = env.legal_actions();
+    const auto legal2 = env.legal_actions();
+    CHECK_TRUE(legal1 == legal2);
+    CHECK_TRUE(env.perf_counters().legal_recompute == 1);
+    CHECK_TRUE(env.perf_counters().enemy_occupancy_recompute == 1);
+
+    const uint64_t grid_version = env.grid_version();
+    const uint64_t tower_version = env.tower_version();
+    const uint64_t money_version = env.money_version();
+    const uint64_t enemy_version = env.enemy_version();
+
+    CHECK_TRUE(!env.step_wait(1).done);
+    CHECK_TRUE(env.grid_version() == grid_version);
+    CHECK_TRUE(env.tower_version() == tower_version);
+    CHECK_TRUE(env.money_version() == money_version);
+    CHECK_TRUE(env.enemy_version() != enemy_version);
+
+    (void)env.legal_actions();
+    CHECK_TRUE(env.perf_counters().legal_recompute == 2);
+    CHECK_TRUE(env.perf_counters().enemy_occupancy_recompute == 2);
+
+    (void)env.legal_actions();
+    CHECK_TRUE(env.perf_counters().legal_recompute == 2);
+    CHECK_TRUE(env.perf_counters().enemy_occupancy_recompute == 2);
 }
 
 void test_placeable_and_legal_actions_are_cached() {
@@ -349,6 +405,8 @@ int main() {
         test_slow_tower_applies_slow();
         test_towers_do_not_retarget_dead_enemy();
         test_build_legality_basics();
+        test_enemy_occupied_cells_are_not_buildable();
+        test_legal_cache_tracks_enemy_version();
         test_placeable_and_legal_actions_are_cached();
         std::cout << "Game logic tests passed!" << std::endl;
         return 0;
