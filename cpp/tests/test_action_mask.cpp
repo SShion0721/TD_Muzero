@@ -75,7 +75,7 @@ void test_mcts_mask_api_never_expands_invalid_root_actions() {
     DummyNetwork network;
     MCTS mcts(cfg);
 
-    auto output = mcts.search_single(network, observation, mask);
+    auto output = mcts.search_single_masked(network, observation, mask);
 
     CHECK_TRUE(output.action >= 0);
     CHECK_TRUE(mask[static_cast<size_t>(output.action)] == 1u);
