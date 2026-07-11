@@ -42,7 +42,7 @@ GameHistory SelfPlayRunner::run(TDEngine& env, INetworkEvaluator& evaluator) con
         record.wave = env.wave();
         record.time = env.time();
 
-        auto search = mcts.search_single(evaluator, observation, legal_mask);
+        auto search = mcts.search_single_masked(evaluator, observation, legal_mask);
         if (search.action < 0 || search.action >= static_cast<int>(legal_mask.size())
             || legal_mask[static_cast<size_t>(search.action)] == 0u) {
             throw std::runtime_error("MCTS returned an invalid or masked action");
