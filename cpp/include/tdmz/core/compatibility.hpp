@@ -23,10 +23,10 @@ inline constexpr uint32_t kObservationSchemaVersion = 2;
 inline constexpr uint32_t kActionSpaceVersion = 1;
 inline constexpr uint32_t kRewardTransformVersion = 1;
 
-// Architecture v2 consumes the 40-channel observation schema. The later
-// spatial policy/action redesign must increment this version again.
-inline constexpr uint32_t kNetworkArchitectureVersion = 2;
-inline constexpr uint32_t kCheckpointManifestVersion = 1;
+// Architecture v3 uses seven local action planes in Dynamics and six spatial
+// policy/legality planes plus one wait scalar in Prediction.
+inline constexpr uint32_t kNetworkArchitectureVersion = 3;
+inline constexpr uint32_t kCheckpointManifestVersion = 2;
 inline constexpr int kObservationSize = OBS_CHANNELS * kBoardH * kBoardW;
 
 struct CompatibilityMetadata {
