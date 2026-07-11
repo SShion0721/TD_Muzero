@@ -33,7 +33,7 @@ void check_throws_contains(Fn&& fn, const std::string& needle) {
 
 void test_current_compatibility_versions() {
     const CompatibilityMetadata metadata = current_compatibility_metadata();
-    CHECK(metadata.environment_rule_version == 2);
+    CHECK(metadata.environment_rule_version == 3);
     CHECK(metadata.observation_schema_version == 2);
     CHECK(metadata.network_architecture_version == 3);
     CHECK(kCheckpointManifestVersion == 2);
@@ -61,6 +61,7 @@ void test_manifest_roundtrip() {
     CHECK(loaded.hidden_channels == 96);
     CHECK(loaded.action_planes == kSpatialActionPlanes);
     CHECK(loaded.policy_planes == kSpatialPolicyPlanes);
+    CHECK(loaded.compatibility.environment_rule_version == 3);
     CHECK(loaded.compatibility.observation_schema_version == 2);
     CHECK(loaded.compatibility.observation_channels == OBS_CHANNELS);
     CHECK(loaded.compatibility.network_architecture_version == 3);
