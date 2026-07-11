@@ -16,11 +16,11 @@ GameHistory SelfPlayRunner::run(INetworkEvaluator& evaluator) const {
 
 GameHistory SelfPlayRunner::run(TDEngine& env, INetworkEvaluator& evaluator) const {
     GameHistory history;
-    history.seed = cfg_.seed;
+    history.seed = env.seed();
     history.max_steps = cfg_.max_steps;
 
     MCTSConfig mcts_cfg = cfg_.mcts;
-    mcts_cfg.random_seed = cfg_.seed;
+    mcts_cfg.random_seed = history.seed;
     MCTS mcts(mcts_cfg);
 
     Observation observation_scratch;
