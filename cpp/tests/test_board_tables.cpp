@@ -51,6 +51,18 @@ void test_action_tables_roundtrip() {
     CHECK_TRUE(t.build_action[0][cell_id(3, 7)] == encode_action(Action{ActionType::BuildBasic, 3, 7, 1}));
     CHECK_TRUE(t.upgrade_action[cell_id(2, 4)] == encode_action(Action{ActionType::Upgrade, 2, 4, 1}));
     CHECK_TRUE(t.sell_action[cell_id(9, 8)] == encode_action(Action{ActionType::Sell, 9, 8, 1}));
+
+    Action default_action;
+    CHECK_TRUE(default_action.type == ActionType::Wait1);
+    CHECK_TRUE(encode_action(default_action) == kFlatWaitOffset);
+
+    bool rejected = false;
+    try {
+        (void)encode_action(Action{ActionType::Wait1, -1, -1, 2});
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    CHECK_TRUE(rejected);
 }
 
 void test_range_masks() {
