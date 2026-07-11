@@ -62,6 +62,7 @@ public:
     float pending_spawn_total_hp() const;
     bool game_over() const { return game_over_; }
     float time() const { return time_; }
+    uint64_t seed() const { return seed_; }
 
     int spawn_x() const { return spawn_x_; }
     int spawn_y() const { return spawn_y_; }
