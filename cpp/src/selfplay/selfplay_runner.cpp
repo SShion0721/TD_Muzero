@@ -23,16 +23,11 @@ GameHistory SelfPlayRunner::run(TDEngine& env, INetworkEvaluator& evaluator) con
     mcts_cfg.random_seed = cfg_.seed;
     MCTS mcts(mcts_cfg);
 
+    Observation observation_scratch;
     for (int step = 0; step < cfg_.max_steps; ++step) {
         if (cfg_.stop_on_terminal && env.game_over()) {
             history.terminal = true;
             break;
-        }
-
-        auto observation = make_observation_v1(env);
-        auto legal_mask = env.legal_action_mask();
-        if (std::none_of(legal_mask.begin(), legal_mask.end(), [](uint8_t value) { return value != 0u; })) {
-            throw std::runtime_error("Self-play encountered a state with no legal actions");
         }
 
         TrajectoryStep record;
@@ -42,7 +37,21 @@ GameHistory SelfPlayRunner::run(TDEngine& env, INetworkEvaluator& evaluator) con
         record.wave = env.wave();
         record.time = env.time();
 
-        auto search = mcts.search_single_masked(evaluator, observation, legal_mask);
+        Observation* observation = nullptr;
+        if (cfg_.save_observations) {
+            make_observation_v1_into(env, record.observation);
+            observation = &record.observation;
+        } else {
+            make_observation_v1_into(env, observation_scratch);
+            observation = &observation_scratch;
+        }
+
+        auto legal_mask = env.legal_action_mask();
+        if (std::none_of(legal_mask.begin(), legal_mask.end(), [](uint8_t value) { return value != 0u; })) {
+            throw std::runtime_error("Self-play encountered a state with no legal actions");
+        }
+
+        auto search = mcts.search_single_masked(evaluator, *observation, legal_mask);
         if (search.action < 0 || search.action >= static_cast<int>(legal_mask.size())
             || legal_mask[static_cast<size_t>(search.action)] == 0u) {
             throw std::runtime_error("MCTS returned an invalid or masked action");
@@ -55,7 +64,6 @@ GameHistory SelfPlayRunner::run(TDEngine& env, INetworkEvaluator& evaluator) con
         record.root_value = search.root_value;
         record.done = result.done;
         record.policy_target = search.policy_full;
-        if (cfg_.save_observations) record.observation = std::move(observation);
         if (cfg_.save_legal_mask) record.legal_mask = std::move(legal_mask);
 
         history.total_reward += result.reward;
