@@ -48,6 +48,12 @@ struct Tower {
     void step(float dt);
     bool can_shoot() const;
     void shoot();
+
+    // Advances the cooldown clock inside a half-open time window [0, dt).
+    // remaining_dt is reduced to the instant at which the tower becomes ready.
+    // A cooldown expiring exactly at the end of the window is carried as zero
+    // into the next tick and does not grant an extra shot in the current tick.
+    bool advance_until_ready(float& remaining_dt);
 };
 
 } // namespace tdmz
