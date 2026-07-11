@@ -21,15 +21,22 @@ enum class ActionType : int {
 
 constexpr int kBuildTypes = 4;
 constexpr int kActionTypes = 7;
+constexpr int kSpatialPolicyPlanes = 6;
+constexpr int kSpatialActionPlanes = kActionTypes;
 constexpr int kFlatBuildOffset = 0;
 constexpr int kFlatUpgradeOffset = kCells * 4;
 constexpr int kFlatSellOffset = kCells * 5;
-constexpr int kFlatWaitOffset = kCells * 6;
+constexpr int kFlatWaitOffset = kCells * kSpatialPolicyPlanes;
 constexpr int kWaitActions = 1;
-constexpr int kActionSpaceSize = kCells * 6 + kWaitActions;
+constexpr int kActionSpaceSize = kCells * kSpatialPolicyPlanes + kWaitActions;
+
+static_assert(kSpatialActionPlanes == 7, "Spatial action plane count changed");
+static_assert(kSpatialPolicyPlanes == 6, "Spatial policy plane count changed");
+static_assert(kFlatWaitOffset == 726, "Action-space ABI changed");
+static_assert(kActionSpaceSize == 727, "Action-space ABI changed");
 
 struct Action {
-    ActionType type;
+    ActionType type = ActionType::Wait1;
     int x = -1;
     int y = -1;
     int wait_steps = 1;
