@@ -39,10 +39,10 @@ GameHistory SelfPlayRunner::run(TDEngine& env, INetworkEvaluator& evaluator) con
 
         Observation* observation = nullptr;
         if (cfg_.save_observations) {
-            make_observation_v1_into(env, record.observation);
+            make_observation_v2_into(env, record.observation);
             observation = &record.observation;
         } else {
-            make_observation_v1_into(env, observation_scratch);
+            make_observation_v2_into(env, observation_scratch);
             observation = &observation_scratch;
         }
 
