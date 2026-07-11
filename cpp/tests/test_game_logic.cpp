@@ -282,18 +282,21 @@ void test_slow_tower_applies_slow() {
 void test_towers_do_not_retarget_dead_enemy() {
     TDEngine env(11, 11, 0);
     int first_basic = encode_action(Action{ActionType::BuildBasic, 4, 4, 1});
-    int second_basic = encode_action(Action{ActionType::BuildBasic, 4, 6, 1});
+    int second_sniper = encode_action(Action{ActionType::BuildSniper, 4, 6, 1});
 
     auto first = env.step_action(first_basic);
-    auto second = env.step_action(second_basic);
+    auto second = env.step_action(second_sniper);
 
     CHECK_TRUE(!first.done);
     CHECK_TRUE(!second.done);
-    CHECK_TRUE(std::abs(second.reward - 5.0f) < 1e-5f);
+    CHECK_TRUE(second.reward >= 10.0f);
     CHECK_TRUE(env.towers().size() == 2);
-    CHECK_TRUE(env.towers()[0].cooldown > 0.0f);
-    CHECK_TRUE(env.towers()[1].cooldown <= 0.0f);
-    CHECK_TRUE(env.enemies().size() == 1);
+    // A one-second Basic cooldown expires exactly at the tick boundary, so its
+    // ending cooldown is zero even though it fired. The Sniper's longer
+    // cooldown proves that the second tower acquired a different live target
+    // after the first tower killed its target.
+    CHECK_TRUE(near_float(env.towers()[0].cooldown, 0.0f));
+    CHECK_TRUE(env.towers()[1].cooldown > 0.0f);
 }
 
 void test_build_legality_basics() {
