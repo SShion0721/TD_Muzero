@@ -1,5 +1,7 @@
 #include "tdmz/core/tower.hpp"
 #include <algorithm>
+#include <cmath>
+#include <stdexcept>
 
 namespace tdmz {
 
@@ -48,8 +50,11 @@ void Tower::upgrade() {
 }
 
 void Tower::step(float dt) {
+    if (!std::isfinite(dt) || dt < 0.0f) {
+        throw std::invalid_argument("Tower step dt must be finite and non-negative");
+    }
     if (cooldown > 0.0f) {
-        cooldown -= dt;
+        cooldown = std::max(0.0f, cooldown - dt);
     }
 }
 
@@ -59,6 +64,30 @@ bool Tower::can_shoot() const {
 
 void Tower::shoot() {
     cooldown = cooldown_max;
+}
+
+bool Tower::advance_until_ready(float& remaining_dt) {
+    if (!std::isfinite(remaining_dt) || remaining_dt < 0.0f) {
+        throw std::invalid_argument("Tower remaining dt must be finite and non-negative");
+    }
+    if (remaining_dt <= 0.0f) return false;
+
+    if (cooldown <= 0.0f) {
+        cooldown = 0.0f;
+        return true;
+    }
+
+    // The tick interval is half-open. Expiring exactly at its end leaves the
+    // tower ready for the next tick but does not create an extra boundary shot.
+    if (cooldown >= remaining_dt) {
+        cooldown = std::max(0.0f, cooldown - remaining_dt);
+        remaining_dt = 0.0f;
+        return false;
+    }
+
+    remaining_dt -= cooldown;
+    cooldown = 0.0f;
+    return true;
 }
 
 } // namespace tdmz
