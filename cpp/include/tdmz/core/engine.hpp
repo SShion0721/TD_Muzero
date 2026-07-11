@@ -6,6 +6,7 @@
 #include "tdmz/core/board_tables.hpp"
 #include "tdmz/core/tower.hpp"
 #include "tdmz/core/enemy.hpp"
+#include "tdmz/core/pending_spawn_queue.hpp"
 #include "tdmz/core/rng.hpp"
 
 namespace tdmz {
@@ -105,7 +106,7 @@ private:
     Bitboard128 bb_blocked_;
     std::vector<Tower> towers_;
     std::vector<Enemy> enemies_;
-    std::vector<EnemySpec> enemies_to_spawn_;
+    PendingSpawnQueue enemies_to_spawn_;
     std::vector<int> enemy_bucket_next_scratch_;
 
     uint64_t seed_;
