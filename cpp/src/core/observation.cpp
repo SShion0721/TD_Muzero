@@ -2,58 +2,63 @@
 #include "tdmz/core/board_tables.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <vector>
 
 namespace tdmz {
 
 namespace {
 
 constexpr int kObsPlane = kBoardW * kBoardH;
-constexpr uint64_t kFnvOffset = 1469598103934665603ULL;
-constexpr uint64_t kFnvPrime = 1099511628211ULL;
 
 inline int obs_index(int c, int y, int x) {
     return (c * kBoardH + y) * kBoardW + x;
 }
 
-uint64_t static_tower_signature(const TDEngine& env) {
-    uint64_t h = kFnvOffset;
-    auto mix = [&](uint64_t value) {
-        h ^= value;
-        h *= kFnvPrime;
-    };
-
-    mix(static_cast<uint64_t>(env.towers().size()));
-    for (const auto& tower : env.towers()) {
-        mix(static_cast<uint64_t>(tower.x));
-        mix(static_cast<uint64_t>(tower.y));
-        mix(static_cast<uint64_t>(static_cast<int>(tower.type)));
-        mix(static_cast<uint64_t>(tower.level));
-    }
-    return h;
+uint16_t pack_static_tower(const Tower& tower) {
+    const int cell = cell_id(tower.x, tower.y);
+    const int type = static_cast<int>(tower.type);
+    return static_cast<uint16_t>(
+        (cell & 0x7f) |
+        ((type & 0x03) << 7) |
+        ((tower.level & 0x07) << 9)
+    );
 }
 
 struct ObservationStaticCache {
     bool valid = false;
     Bitboard128 blocked{};
-    uint64_t tower_signature = 0;
+    std::vector<uint16_t> towers;
     Observation static_obs;
 };
 
 thread_local ObservationStaticCache g_static_cache;
 
+bool static_key_matches(const TDEngine& env, Bitboard128 blocked) {
+    if (!g_static_cache.valid || g_static_cache.blocked != blocked) return false;
+    if (g_static_cache.towers.size() != env.towers().size()) return false;
+
+    for (std::size_t i = 0; i < env.towers().size(); ++i) {
+        if (g_static_cache.towers[i] != pack_static_tower(env.towers()[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
 const Observation& get_static_observation_channels(const TDEngine& env) {
     const Bitboard128 blocked = env.blocked_bitboard();
-    const uint64_t tower_signature = static_tower_signature(env);
-    if (g_static_cache.valid &&
-        g_static_cache.blocked == blocked &&
-        g_static_cache.tower_signature == tower_signature &&
+    if (static_key_matches(env, blocked) &&
         g_static_cache.static_obs.size() == OBS_CHANNELS * kObsPlane) {
         return g_static_cache.static_obs;
     }
 
     g_static_cache.valid = true;
     g_static_cache.blocked = blocked;
-    g_static_cache.tower_signature = tower_signature;
+    g_static_cache.towers.resize(env.towers().size());
+    for (std::size_t i = 0; i < env.towers().size(); ++i) {
+        g_static_cache.towers[i] = pack_static_tower(env.towers()[i]);
+    }
     g_static_cache.static_obs.assign(OBS_CHANNELS * kObsPlane, 0.0f);
 
     auto at = [&](int c, int y, int x) -> float& {
@@ -150,11 +155,12 @@ std::array<int, 3> observation_shape_python_parity() {
     return {5, kBoardH, kBoardW};
 }
 
-Observation make_observation_v1(const TDEngine& env) {
-    Observation obs = get_static_observation_channels(env);
+void make_observation_v1_into(const TDEngine& env, Observation& output) {
+    const Observation& static_obs = get_static_observation_channels(env);
+    output.assign(static_obs.begin(), static_obs.end());
 
     auto at = [&](int c, int y, int x) -> float& {
-        return obs[obs_index(c, y, x)];
+        return output[obs_index(c, y, x)];
     };
 
     for (const auto& tower : env.towers()) {
@@ -190,8 +196,12 @@ Observation make_observation_v1(const TDEngine& env) {
             at(CH_TO_SPAWN_COUNT, y, x) = to_spawn_val;
         }
     }
+}
 
-    return obs;
+Observation make_observation_v1(const TDEngine& env) {
+    Observation output;
+    make_observation_v1_into(env, output);
+    return output;
 }
 
 std::array<int, 3> observation_shape_v1() {
