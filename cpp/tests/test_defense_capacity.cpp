@@ -30,6 +30,33 @@ void test_empty_defense_has_leak_cap() {
     CHECK_TRUE(r.path_len > 0);
 }
 
+void test_half_open_shot_timing() {
+    CHECK_CLOSE(
+        estimate_tower_damage_capacity(TowerType::Basic, 1, 1.0f, 1.0f, 1.0f),
+        10.0f,
+        1e-5f);
+    CHECK_CLOSE(
+        estimate_tower_damage_capacity(TowerType::Basic, 1, 2.0f, 1.0f, 1.0f),
+        20.0f,
+        1e-5f);
+    CHECK_CLOSE(
+        estimate_tower_damage_capacity(TowerType::AOE, 1, 2.0f, 1.0f, 1.0f),
+        30.0f,
+        1e-5f);
+
+    Tower tower(0, 0, TowerType::Basic);
+    tower.cooldown = 1.0f;
+    CHECK_CLOSE(
+        estimate_existing_tower_damage_capacity(tower, 1.0f, 1.0f, 1.0f),
+        0.0f,
+        1e-5f);
+    tower.cooldown = 0.5f;
+    CHECK_CLOSE(
+        estimate_existing_tower_damage_capacity(tower, 1.0f, 1.0f, 1.0f),
+        10.0f,
+        1e-5f);
+}
+
 void test_path_tower_cap_increases() {
     TDEngine empty(11, 11, 0);
     DefenseCapacityConfig cfg;
@@ -139,6 +166,7 @@ void test_negative_free_result() {
 
 int main() {
     test_empty_defense_has_leak_cap();
+    test_half_open_shot_timing();
     test_path_tower_cap_increases();
     test_off_path_tower_is_discounted();
     test_sniper_cap_beats_basic_on_path();
