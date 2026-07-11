@@ -31,6 +31,15 @@ void check_throws_contains(Fn&& fn, const std::string& needle) {
     CHECK(threw);
 }
 
+void test_current_compatibility_versions() {
+    const CompatibilityMetadata metadata = current_compatibility_metadata();
+    CHECK(metadata.environment_rule_version == 2);
+    CHECK(metadata.observation_schema_version == 2);
+    CHECK(metadata.network_architecture_version == 2);
+    CHECK(metadata.observation_channels == 40);
+    CHECK(metadata.observation_size == 40 * kBoardH * kBoardW);
+}
+
 void test_manifest_roundtrip() {
     const std::string path = "test_checkpoint_manifest.json";
     NetworkConfig config;
@@ -49,6 +58,8 @@ void test_manifest_roundtrip() {
     CHECK(loaded.latent_channels == 48);
     CHECK(loaded.hidden_channels == 96);
     CHECK(loaded.action_embedding_dim == 24);
+    CHECK(loaded.compatibility.observation_schema_version == 2);
+    CHECK(loaded.compatibility.observation_channels == OBS_CHANNELS);
     validate_checkpoint_manifest(loaded, config, true);
 
     std::filesystem::remove(path);
@@ -62,6 +73,18 @@ void test_manifest_rejects_architecture_mismatch() {
     check_throws_contains(
         [&] { validate_checkpoint_manifest(manifest, config); },
         "network_architecture_version");
+}
+
+void test_manifest_rejects_observation_schema_mismatch() {
+    NetworkConfig config;
+    CheckpointManifest manifest = make_checkpoint_manifest(config, 0, 0, false);
+    manifest.compatibility.observation_schema_version = 1;
+    manifest.compatibility.observation_channels = 20;
+    manifest.compatibility.observation_size = 20 * kBoardH * kBoardW;
+
+    check_throws_contains(
+        [&] { validate_checkpoint_manifest(manifest, config); },
+        "observation_schema_version");
 }
 
 void test_manifest_requires_optimizer_for_resume() {
@@ -91,8 +114,10 @@ void test_manifest_rejects_missing_fields() {
 
 int main() {
     try {
+        test_current_compatibility_versions();
         test_manifest_roundtrip();
         test_manifest_rejects_architecture_mismatch();
+        test_manifest_rejects_observation_schema_mismatch();
         test_manifest_requires_optimizer_for_resume();
         test_manifest_rejects_missing_fields();
         std::cout << "Checkpoint manifest tests passed!" << std::endl;
