@@ -32,12 +32,19 @@ TowerStats stats_after_level(TowerType type, int level) {
     return s;
 }
 
-float estimate_stats_damage_capacity(const TowerStats& s, TowerType type, float window_seconds, float aoe_multiplier, float slow_multiplier) {
-    float window = sanitize_nonnegative(window_seconds);
-    float cooldown = std::max(0.1f, s.cooldown);
-    int shots = static_cast<int>(std::floor(window / cooldown));
-    if (window > 0.0f && shots < 1) shots = 1;
+int count_half_open_shots(float window_seconds, float first_shot_delay, float cooldown) {
+    const double window = static_cast<double>(sanitize_nonnegative(window_seconds));
+    const double delay = static_cast<double>(sanitize_nonnegative(first_shot_delay));
+    const double period = static_cast<double>(std::max(0.1f, cooldown));
+    if (window <= 0.0 || delay >= window) return 0;
 
+    // Shot times are delay + n * period and must satisfy t < window.
+    const double ratio = (window - delay) / period;
+    return std::max(0, static_cast<int>(std::ceil(ratio - 1e-9)));
+}
+
+float estimate_stats_damage_capacity(const TowerStats& s, TowerType type, float window_seconds, float aoe_multiplier, float slow_multiplier) {
+    const int shots = count_half_open_shots(window_seconds, 0.0f, s.cooldown);
     float cap = static_cast<float>(shots) * std::max(0.0f, s.damage);
     if (type == TowerType::AOE) {
         cap *= std::max(1.0f, aoe_multiplier);
@@ -98,14 +105,10 @@ float estimate_tower_damage_capacity(TowerType type, int level, float window_sec
 }
 
 float estimate_existing_tower_damage_capacity(const Tower& tower, float window_seconds, float aoe_multiplier, float slow_multiplier) {
-    float window = sanitize_nonnegative(window_seconds);
-    float cooldown = std::max(0.1f, tower.cooldown_max);
-    float first_shot_delay = std::max(0.0f, tower.cooldown);
-    if (window <= 0.0f || first_shot_delay > window) {
-        return 0.0f;
-    }
-
-    int shots = 1 + static_cast<int>(std::floor((window - first_shot_delay) / cooldown));
+    const int shots = count_half_open_shots(
+        window_seconds,
+        std::max(0.0f, tower.cooldown),
+        tower.cooldown_max);
     float cap = static_cast<float>(shots) * std::max(0.0f, tower.damage);
     if (tower.type == TowerType::AOE) {
         cap *= std::max(1.0f, aoe_multiplier);
