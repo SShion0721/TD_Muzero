@@ -13,10 +13,10 @@ inline constexpr uint32_t kReplayIndexVersion = 2;
 inline constexpr uint32_t kReplayBinaryFormatVersion = 2;
 inline constexpr uint32_t kLegacyReplayBinaryFormatVersion = 1;
 
-// Rule v3 includes the v2 continuous movement/cooldown, terminal-tick time,
-// dead-target filtering, enemy-occupied build masking and cursor queues, plus
-// half-open DefenseCapacity shot counting used by budgeted wave generation.
-inline constexpr uint32_t kEnvironmentRuleVersion = 3;
+// Rule v4 includes the v3 continuous movement/cooldown and budgeted-wave timing
+// semantics, and makes completed episodes fully absorbing across action, time,
+// economy, legal-mask, and wave-mode mutation APIs.
+inline constexpr uint32_t kEnvironmentRuleVersion = 4;
 
 // Observation v2 adds Markov-critical pending-wave data, absolute enemy state,
 // continuous-position splatting, route direction/distance, and bounded scaling.
