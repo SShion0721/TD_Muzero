@@ -9,7 +9,10 @@ set(TDMZ_CORE_SOURCES
     src/core/board_tables.cpp
     src/core/compatibility.cpp
     src/core/enemy.cpp
-    src/core/engine.cpp
+    src/core/engine_actions.cpp
+    src/core/engine_board.cpp
+    src/core/engine_state.cpp
+    src/core/engine_tick.cpp
     src/core/golden_trace.cpp
     src/core/observation.cpp
     src/core/pathfinding.cpp
