@@ -1,6 +1,7 @@
 #include "tdmz/selfplay/selfplay_runner.hpp"
 #include "tdmz/core/observation.hpp"
 #include "tdmz/mcts/mcts.hpp"
+#include <algorithm>
 #include <stdexcept>
 #include <utility>
 
@@ -29,11 +30,10 @@ GameHistory SelfPlayRunner::run(TDEngine& env, INetworkEvaluator& evaluator) con
         }
 
         auto observation = make_observation_v1(env);
-        auto legal = env.legal_actions();
-        if (legal.empty()) {
+        auto legal_mask = env.legal_action_mask();
+        if (std::none_of(legal_mask.begin(), legal_mask.end(), [](uint8_t value) { return value != 0u; })) {
             throw std::runtime_error("Self-play encountered a state with no legal actions");
         }
-        auto legal_mask = env.legal_action_mask();
 
         TrajectoryStep record;
         record.step_index = step;
@@ -42,9 +42,10 @@ GameHistory SelfPlayRunner::run(TDEngine& env, INetworkEvaluator& evaluator) con
         record.wave = env.wave();
         record.time = env.time();
 
-        auto search = mcts.search_single(evaluator, observation, legal);
-        if (search.action < 0) {
-            throw std::runtime_error("MCTS returned an invalid action");
+        auto search = mcts.search_single(evaluator, observation, legal_mask);
+        if (search.action < 0 || search.action >= static_cast<int>(legal_mask.size())
+            || legal_mask[static_cast<size_t>(search.action)] == 0u) {
+            throw std::runtime_error("MCTS returned an invalid or masked action");
         }
 
         StepResult result = env.step_action(search.action);
