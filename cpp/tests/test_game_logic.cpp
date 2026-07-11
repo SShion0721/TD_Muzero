@@ -82,6 +82,7 @@ static void check_engine_state_equal(const TDEngine& lhs, const TDEngine& rhs) {
         CHECK_TRUE(near_float(a.slow_timer, b.slow_timer));
         CHECK_TRUE(a.reward == b.reward);
         CHECK_TRUE(a.path == b.path);
+        CHECK_TRUE(a.path_cursor == b.path_cursor);
     }
 }
 
@@ -168,7 +169,8 @@ void test_fast_enemy_consumes_full_movement_distance() {
 
     CHECK_TRUE(std::abs(enemy.x - 2.8f) < 1e-5f);
     CHECK_TRUE(std::abs(enemy.y) < 1e-5f);
-    CHECK_TRUE(enemy.path.size() == 2);
+    CHECK_TRUE(enemy.path.size() == 4);
+    CHECK_TRUE(enemy.path_cursor == 2);
     CHECK_TRUE(std::abs(enemy.target_x - 3.0f) < 1e-5f);
     CHECK_TRUE(std::abs(enemy.target_y) < 1e-5f);
 }
@@ -326,24 +328,29 @@ void test_placeable_and_legal_actions_are_cached() {
 }
 
 int main() {
-    test_constructor_rejects_non_11x11();
-    test_step_time_zero_is_noop();
-    test_step_time_rejects_non_discrete_inputs();
-    test_multi_tick_step_matches_repeated_single_ticks();
-    test_path_on_empty_grid();
-    test_fast_enemy_consumes_full_movement_distance();
-    test_slow_duration_spans_full_time_window();
-    test_slow_expiry_splits_large_dt();
-    test_place_upgrade_sell_economy();
-    test_tower_upgrade_caps_at_level_five();
-    test_invalid_action_penalty();
-    test_spawn_and_enemy_movement();
-    test_base_takes_damage_without_towers();
-    test_sniper_shoots_and_enters_cooldown();
-    test_slow_tower_applies_slow();
-    test_towers_do_not_retarget_dead_enemy();
-    test_build_legality_basics();
-    test_placeable_and_legal_actions_are_cached();
-    std::cout << "Game logic tests passed!" << std::endl;
-    return 0;
+    try {
+        test_constructor_rejects_non_11x11();
+        test_step_time_zero_is_noop();
+        test_step_time_rejects_non_discrete_inputs();
+        test_multi_tick_step_matches_repeated_single_ticks();
+        test_path_on_empty_grid();
+        test_fast_enemy_consumes_full_movement_distance();
+        test_slow_duration_spans_full_time_window();
+        test_slow_expiry_splits_large_dt();
+        test_place_upgrade_sell_economy();
+        test_tower_upgrade_caps_at_level_five();
+        test_invalid_action_penalty();
+        test_spawn_and_enemy_movement();
+        test_base_takes_damage_without_towers();
+        test_sniper_shoots_and_enters_cooldown();
+        test_slow_tower_applies_slow();
+        test_towers_do_not_retarget_dead_enemy();
+        test_build_legality_basics();
+        test_placeable_and_legal_actions_are_cached();
+        std::cout << "Game logic tests passed!" << std::endl;
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << e.what() << std::endl;
+        return 1;
+    }
 }
