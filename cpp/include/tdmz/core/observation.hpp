@@ -37,10 +37,13 @@ enum ObsChannel {
 
 using Observation = std::vector<float>; // C * H * W, contiguous CHW
 
+// Writes the V1 observation into caller-owned storage. Repeated calls with a
+// correctly sized buffer reuse its allocation.
+void make_observation_v1_into(const TDEngine& env, Observation& output);
 Observation make_observation_v1(const TDEngine& env);
 std::array<int, 3> observation_shape_v1(); // {OBS_CHANNELS, 11, 11}
 
-// For Phase 1 parity check, we also need the exact Python observation
+// For Phase 1 parity check, we also need the exact Python observation.
 Observation make_observation_python_parity(const TDEngine& env);
 std::array<int, 3> observation_shape_python_parity(); // {5, 11, 11}
 
