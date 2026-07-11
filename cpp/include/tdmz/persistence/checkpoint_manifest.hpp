@@ -20,7 +20,8 @@ struct CheckpointManifest {
 
     int latent_channels = 0;
     int hidden_channels = 0;
-    int action_embedding_dim = 0;
+    int action_planes = 0;
+    int policy_planes = 0;
     int value_dim = 0;
     int reward_dim = 0;
 };
