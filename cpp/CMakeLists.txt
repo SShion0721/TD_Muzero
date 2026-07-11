@@ -15,6 +15,7 @@ set(TDMZ_CORE_SOURCES
     src/core/pathfinding.cpp
     src/core/rng.cpp
     src/core/tower.cpp
+    src/mcts/action_mask.cpp
     src/mcts/mcts.cpp
     src/persistence/checkpoint_manifest.cpp
     src/selfplay/replay_dataset_v2.cpp
@@ -81,5 +82,6 @@ tdmz_add_core_app(generate_selfplay_shards apps/generate_selfplay_shards_v2.cpp)
 if(WIN32 AND TDMZ_BUILD_ENGINE_DEBUG_GUI)
     add_executable(tdmz_engine_debug_gui WIN32 apps/engine_debug_gui_win32.cpp)
     target_compile_features(tdmz_engine_debug_gui PRIVATE cxx_std_17)
+    target_compile_definitions(tdmz_engine_debug_gui PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     target_link_libraries(tdmz_engine_debug_gui PRIVATE tdmz_core user32 gdi32)
 endif()
