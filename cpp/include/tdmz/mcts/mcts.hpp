@@ -24,6 +24,15 @@ public:
         const std::vector<int>& legal_actions
     );
 
+    // Preferred root API. The environment supplies one exact state-dependent
+    // mask over the full action space; invalid actions are never expanded and
+    // therefore receive exactly zero prior, visits, and policy target mass.
+    RootSearchOutput search_single(
+        INetworkEvaluator& net,
+        const std::vector<float>& observation,
+        const std::vector<uint8_t>& legal_mask
+    );
+
 private:
     MCTSConfig cfg_;
     std::mt19937_64 rng_;
