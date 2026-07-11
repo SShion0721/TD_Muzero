@@ -1,6 +1,7 @@
 #include "tdmz/core/enemy.hpp"
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
 
 namespace tdmz {
 
@@ -31,7 +32,10 @@ void Enemy::set_path(const std::vector<std::pair<int, int>>& new_path) {
 }
 
 void Enemy::step(float dt) {
-    if (dt <= 0.0f) {
+    if (!std::isfinite(dt) || dt < 0.0f) {
+        throw std::invalid_argument("Enemy step dt must be finite and non-negative");
+    }
+    if (dt == 0.0f) {
         return;
     }
 
