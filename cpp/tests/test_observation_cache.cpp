@@ -88,15 +88,22 @@ static Observation make_observation_v1_reference(const TDEngine& env) {
     return obs;
 }
 
-static void assert_obs_equal(const TDEngine& env, const char* label) {
-    Observation cached = make_observation_v1(env);
-    Observation ref = make_observation_v1_reference(env);
-    CHECK_TRUE(cached.size() == ref.size());
-    for (size_t i = 0; i < cached.size(); ++i) {
-        if (std::fabs(cached[i] - ref[i]) > 1e-6f) {
+static void assert_vectors_equal(const Observation& actual, const Observation& expected, const char* label) {
+    CHECK_TRUE(actual.size() == expected.size());
+    for (size_t i = 0; i < actual.size(); ++i) {
+        if (std::fabs(actual[i] - expected[i]) > 1e-6f) {
             throw std::runtime_error(std::string("observation mismatch at ") + label + " index " + std::to_string(i));
         }
     }
+}
+
+static void assert_obs_equal(const TDEngine& env, const char* label) {
+    Observation cached = make_observation_v1(env);
+    Observation reused;
+    make_observation_v1_into(env, reused);
+    Observation ref = make_observation_v1_reference(env);
+    assert_vectors_equal(cached, ref, label);
+    assert_vectors_equal(reused, ref, label);
 }
 
 void test_static_cache_matches_reference_across_versions() {
@@ -136,6 +143,67 @@ void test_cache_switches_between_env_instances() {
     assert_obs_equal(a, "env_a_again_after_b");
 }
 
+void test_exact_key_distinguishes_same_blocked_cells_with_different_towers() {
+    TDEngine basic(11, 11, 0);
+    TDEngine slow(11, 11, 0);
+    CHECK_TRUE(basic.place_tower(1, 1, TowerType::Basic));
+    CHECK_TRUE(slow.place_tower(1, 1, TowerType::Slow));
+    CHECK_TRUE(basic.blocked_bitboard() == slow.blocked_bitboard());
+
+    Observation basic_obs;
+    Observation slow_obs;
+    make_observation_v1_into(basic, basic_obs);
+    make_observation_v1_into(slow, slow_obs);
+
+    const int basic_index = (CH_TOWER_BASIC * kBoardH + 1) * kBoardW + 1;
+    const int slow_index = (CH_TOWER_SLOW * kBoardH + 1) * kBoardW + 1;
+    CHECK_TRUE(basic_obs[basic_index] == 1.0f);
+    CHECK_TRUE(basic_obs[slow_index] == 0.0f);
+    CHECK_TRUE(slow_obs[basic_index] == 0.0f);
+    CHECK_TRUE(slow_obs[slow_index] == 1.0f);
+}
+
+void test_reused_buffer_keeps_allocation_and_matches_wrapper() {
+    TDEngine env(11, 11, 7);
+    CHECK_TRUE(env.place_tower(1, 4, TowerType::Basic));
+
+    Observation reused;
+    make_observation_v1_into(env, reused);
+    CHECK_TRUE(reused.size() == static_cast<size_t>(OBS_CHANNELS * kBoardH * kBoardW));
+    const float* first_data = reused.data();
+    const size_t first_capacity = reused.capacity();
+
+    for (int i = 0; i < 20; ++i) {
+        env.step_wait(1);
+        make_observation_v1_into(env, reused);
+        CHECK_TRUE(reused.data() == first_data);
+        CHECK_TRUE(reused.capacity() == first_capacity);
+        assert_vectors_equal(reused, make_observation_v1(env), "reused_buffer");
+        if (env.game_over()) env.reset(static_cast<uint64_t>(100 + i));
+    }
+}
+
+void test_reused_buffer_clears_previous_dynamic_channels() {
+    TDEngine active(11, 11, 0);
+    active.step_wait(1);
+
+    Observation reused;
+    make_observation_v1_into(active, reused);
+    float density_sum = 0.0f;
+    for (int i = 0; i < kBoardW * kBoardH; ++i) {
+        density_sum += reused[CH_ENEMY_DENSITY * kBoardW * kBoardH + i];
+    }
+    CHECK_TRUE(density_sum > 0.0f);
+
+    TDEngine empty(11, 11, 0);
+    make_observation_v1_into(empty, reused);
+    for (int channel = CH_ENEMY_HP; channel <= CH_ENEMY_SLOW_TIMER; ++channel) {
+        for (int i = 0; i < kBoardW * kBoardH; ++i) {
+            CHECK_TRUE(reused[channel * kBoardW * kBoardH + i] == 0.0f);
+        }
+    }
+}
+
 void test_cooldown_channel_is_clamped() {
     TDEngine env(11, 11, 0);
     CHECK_TRUE(env.place_tower(1, 1, TowerType::Basic));
@@ -143,12 +211,13 @@ void test_cooldown_channel_is_clamped() {
     auto& towers = const_cast<std::vector<Tower>&>(env.towers());
     towers.front().cooldown = -0.5f;
 
-    Observation obs = make_observation_v1(env);
+    Observation obs;
+    make_observation_v1_into(env, obs);
     const int index = (CH_TOWER_COOLDOWN * kBoardH + 1) * kBoardW + 1;
     CHECK_TRUE(obs[index] == 0.0f);
 
     towers.front().cooldown = towers.front().cooldown_max * 2.0f;
-    obs = make_observation_v1(env);
+    make_observation_v1_into(env, obs);
     CHECK_TRUE(obs[index] == 1.0f);
 }
 
@@ -156,6 +225,9 @@ int main() {
     try {
         test_static_cache_matches_reference_across_versions();
         test_cache_switches_between_env_instances();
+        test_exact_key_distinguishes_same_blocked_cells_with_different_towers();
+        test_reused_buffer_keeps_allocation_and_matches_wrapper();
+        test_reused_buffer_clears_previous_dynamic_channels();
         test_cooldown_channel_is_clamped();
         std::cout << "Observation cache tests passed!" << std::endl;
         return 0;
