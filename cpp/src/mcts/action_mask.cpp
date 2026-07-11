@@ -81,7 +81,7 @@ std::vector<float> masked_softmax(
     return probabilities;
 }
 
-RootSearchOutput MCTS::search_single(
+RootSearchOutput MCTS::search_single_masked(
     INetworkEvaluator& net,
     const std::vector<float>& observation,
     const std::vector<uint8_t>& legal_mask
