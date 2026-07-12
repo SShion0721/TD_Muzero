@@ -11,11 +11,14 @@ class LibTorchEvaluator : public INetworkEvaluator {
 public:
     explicit LibTorchEvaluator(MuZeroNetwork network, torch::Device device = torch::kCPU);
 
-    EvalOutput initial_inference(const std::vector<std::vector<float>>& observations) override;
-    EvalOutput recurrent_inference(const EvalInput& input) override;
-
     void clear_latents();
     bool has_latent(int node_id) const;
+
+protected:
+    EvalOutput initial_inference_impl(
+        const std::vector<std::vector<float>>& observations
+    ) override;
+    EvalOutput recurrent_inference_impl(const EvalInput& input) override;
 
 private:
     torch::Tensor observations_to_tensor(const std::vector<std::vector<float>>& observations) const;
