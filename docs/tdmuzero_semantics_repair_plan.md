@@ -95,13 +95,13 @@ Completed behavior:
 
 ## Phase C — legality-aware evaluator path
 
-Status: C1 transport implemented; local validation required.
-
 ### C1 — evaluator transport and validation
 
-Implemented:
+Status: completed and validated.
 
-1. `EvalOutput` now carries `[B][727]` legality logits.
+Completed behavior:
+
+1. `EvalOutput` carries `[B][727]` legality logits.
 2. `INetworkEvaluator` validates value, reward, policy, and legality at the common public
    interface boundary for both initial and recurrent inference.
 3. Invalid batch counts, invalid policy/legality widths, NaN, and infinity are rejected
@@ -109,48 +109,79 @@ Implemented:
 4. `DummyNetwork` returns deterministic finite legality logits.
 5. `LibTorchEvaluator` copies the network legality tensor to CPU output and independently
    validates tensor definition, shape, batch agreement, and finite values.
-6. Batched custom evaluators and MCTS contract tests now provide legality logits.
+6. Batched custom evaluators and MCTS contract tests provide legality logits.
 7. `test_legality_transport` verifies that opposite legality predictions produce exactly
    the same search output while gating remains disabled.
 8. `test_mcts_libtorch_smoke` verifies the real LibTorch evaluator exposes 727 finite
    legality logits.
+9. Focused, complete normal, and complete LibTorch suites passed.
 
-Deliberately unchanged:
+### C2 — exact targets, BCE loss, and metrics
 
-- root expansion still uses only the engine's exact legal mask;
-- latent expansion still uses policy top-k only;
+Status: implemented; local validation required.
+
+Implemented behavior:
+
+1. `make_legality_targets()` converts exact engine masks to floating `[B,727]` BCE
+   targets without changing action order.
+2. Target construction rejects incorrect dimensions, non-binary masks, and masks that
+   incorrectly mark Wait1 illegal.
+3. `LegalityMetricsAccumulator` records:
+   - true/predicted legal and illegal counts;
+   - true positive, false positive, true negative, and false negative counts;
+   - legal recall and legal precision;
+   - illegal precision;
+   - false-negative and false-positive rates;
+   - Wait recall.
+4. The default decision boundary is logit 0, equivalent to sigmoid probability 0.5.
+5. `hard_pruning_ready()` encodes the minimum reporting gate of legal recall >= 99.5%
+   and Wait recall == 100%, but it does not enable or modify MCTS pruning.
+6. `legality_bce_with_logits()` implements the numerically stable formula
+   `max(x,0) - x*y + log1p(exp(-abs(x)))` over `[B,727]` tensors.
+7. Integer exact masks are accepted by the loss and converted to the logits' device and
+   floating dtype.
+8. `test_legality_training` covers exact conversion, corruption rejection, confusion
+   counts, metric rates, batch accumulation, and the reporting gate.
+9. `test_legality_loss` covers log(2) at zero logits, confident predictions, finite
+   backward gradients, integer targets, and shape rejection.
+
+Deliberately unchanged through C2:
+
+- root expansion uses only the engine's exact legal mask;
+- latent expansion uses policy top-k only;
 - legality logits do not modify priors, candidates, visits, or action selection;
 - no soft gating or hard pruning is enabled;
-- network/checkpoint architecture versions do not change because architecture v3 already
-  contained the legality head.
+- no compatibility version changes because the environment and network architecture are
+  unchanged.
 
-C1 validation gate:
+C2 validation gate:
 
-- `test_mcts`, `test_legality_transport`, and `test_mcts_batched_inference` pass;
-- `test_mcts_libtorch_smoke` and `test_selfplay_torch` pass;
+- `test_legality_training` passes in normal and LibTorch builds;
+- `test_legality_loss` passes in the LibTorch build;
+- C1 transport/MCTS tests continue to pass;
 - complete normal and LibTorch suites pass;
-- Golden Trace and deterministic DummyNetwork search outputs remain unchanged.
+- Golden Trace and deterministic search results remain unchanged.
 
-### C2 — legality targets, loss utilities, and metrics
+### C3 — trainer integration and measured legality quality
 
-Status: blocked on the C1 validation gate.
+Status: blocked by Phase D replay targets and the Phase E trainer.
 
-Next implementation:
+Required later:
 
-1. Build legality targets from the engine's exact root masks.
-2. Add numerically stable binary-cross-entropy-with-logits utilities.
-3. Record legal recall, illegal precision, false-negative rate, false-positive rate,
-   Wait recall, predicted legal count, and true legal count.
-4. Keep all search gating disabled while the head is untrained.
+1. Feed K+1 exact legal masks from sequence replay to the legality head.
+2. Add legality BCE to the joint training objective with an explicit configurable weight.
+3. Report the C2 metrics separately on train and held-out validation states.
+4. Examine class imbalance before introducing positive/negative weighting.
 5. Permit soft latent gating only behind an explicit default-off feature flag after
-   trainer integration and metric validation.
-6. Permit hard pruning only after legal recall is at least 99.5% and Wait recall is 100%.
+   measured validation.
+6. Permit hard pruning only after legal recall is at least 99.5% and Wait recall is 100%,
+   with a regression test proving root exact masks remain authoritative.
 
-Phase C gate:
+Phase C invariant:
 
 - root legality always comes from the real engine;
 - no illegal root action receives prior, visit count, or policy mass;
-- untrained legality cannot hard-prune latent actions.
+- untrained or insufficiently validated legality cannot prune latent actions.
 
 ## Phase D — K-step replay and correct targets
 
@@ -216,7 +247,7 @@ Gate:
 
 1. replay targets remain single-step and `root_value(t)` is not a valid final value label;
 2. terminal and truncated episodes are still conflated;
-3. legality targets/loss/metrics are not yet connected to a trainer;
+3. C2 legality targets/loss/metrics are not yet connected to a sequence trainer;
 4. the low-level transition shard binary itself does not yet embed wave mode; the
    training fence therefore treats the index/direct constructor as authoritative.
 
@@ -230,7 +261,8 @@ Already fixed:
 - action and pathfinding headers declare their dependencies explicitly;
 - terminal states are fully absorbing across public mutation and stepping APIs;
 - training-facing replay requires explicit wave mode and exact current tensor sizes;
-- legality logits now traverse the complete evaluator boundary without affecting search.
+- legality logits traverse the complete evaluator boundary without affecting search;
+- exact legality targets, metrics, and stable BCE loss utilities are available.
 
 ## Validation discipline
 
