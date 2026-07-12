@@ -70,6 +70,10 @@ add_executable(test_legality_training test_legality_training.cpp)
 target_link_libraries(test_legality_training tdmz_core)
 add_test(NAME test_legality_training COMMAND test_legality_training)
 
+add_executable(test_sequence_replay test_sequence_replay.cpp)
+target_link_libraries(test_sequence_replay tdmz_core)
+add_test(NAME test_sequence_replay COMMAND test_sequence_replay)
+
 add_executable(test_checkpoint_manifest test_checkpoint_manifest.cpp)
 target_link_libraries(test_checkpoint_manifest tdmz_core)
 add_test(NAME test_checkpoint_manifest COMMAND test_checkpoint_manifest)
