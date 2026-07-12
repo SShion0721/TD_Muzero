@@ -18,6 +18,7 @@ struct EvalOutput {
     std::vector<float> values;                         // [B]
     std::vector<float> rewards;                        // [B]
     std::vector<std::vector<float>> policy_logits;     // [B][A]
+    std::vector<std::vector<float>> legality_logits;   // [B][A]
 };
 
 class INetworkEvaluator {
