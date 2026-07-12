@@ -105,6 +105,15 @@ public:
 
     ReplaySampleRef locate_game(size_t global_game_index) const;
     GameHistory read_game(size_t global_game_index);
+    ReplayGameMetadata game_metadata(size_t global_game_index) const;
+    BootstrapState read_bootstrap_state(size_t global_game_index);
+    TrajectoryStep read_step(size_t global_game_index, size_t step_index);
+    std::vector<TrajectoryStep> read_step_range(
+        size_t global_game_index,
+        size_t start_step,
+        size_t count
+    );
+
     ReplaySampleRef sample_ref(uint64_t random_u64);
     TrajectoryStep sample_step(uint64_t random_u64);
 
