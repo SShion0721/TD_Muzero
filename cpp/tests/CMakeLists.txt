@@ -66,6 +66,10 @@ add_executable(test_training_replay test_training_replay.cpp)
 target_link_libraries(test_training_replay tdmz_core)
 add_test(NAME test_training_replay COMMAND test_training_replay)
 
+add_executable(test_legality_training test_legality_training.cpp)
+target_link_libraries(test_legality_training tdmz_core)
+add_test(NAME test_legality_training COMMAND test_legality_training)
+
 add_executable(test_checkpoint_manifest test_checkpoint_manifest.cpp)
 target_link_libraries(test_checkpoint_manifest tdmz_core)
 add_test(NAME test_checkpoint_manifest COMMAND test_checkpoint_manifest)
@@ -94,6 +98,10 @@ if(TDMZ_ENABLE_TORCH)
     add_executable(test_network_shape test_network_shape.cpp)
     target_link_libraries(test_network_shape tdmz_nn)
     add_test(NAME test_network_shape COMMAND test_network_shape)
+
+    add_executable(test_legality_loss test_legality_loss.cpp)
+    target_link_libraries(test_legality_loss tdmz_nn)
+    add_test(NAME test_legality_loss COMMAND test_legality_loss)
 
     add_executable(test_mcts_libtorch_smoke test_mcts_libtorch_smoke.cpp)
     target_link_libraries(test_mcts_libtorch_smoke tdmz_nn)
