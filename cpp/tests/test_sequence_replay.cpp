@@ -174,38 +174,45 @@ void test_invalid_episode_semantics_are_rejected() {
 
 void test_uniform_position_index_and_sampler() {
     const std::string path = "test_sequence_replay.tdmzshd";
+    std::filesystem::remove(path);
+
     const GameHistory short_game = make_truncated_history(2, 100);
     const GameHistory long_game = make_truncated_history(5, 101);
     write_histories_transition_shard({short_game, long_game}, path);
 
-    TrainingReplayDataset dataset({path}, WaveMode::Fixed);
-    UniformPositionIndex positions(dataset);
-    CHECK(positions.position_count() == 7u);
+    // Windows does not allow deleting a file while TransitionShardReader still owns
+    // an open handle. Keep all replay readers inside a nested scope so their destructors
+    // close the shard before cleanup.
+    {
+        TrainingReplayDataset dataset({path}, WaveMode::Fixed);
+        UniformPositionIndex positions(dataset);
+        CHECK(positions.position_count() == 7u);
 
-    CHECK(positions.locate(0).global_game_index == 0u);
-    CHECK(positions.locate(0).step_index == 0u);
-    CHECK(positions.locate(1).global_game_index == 0u);
-    CHECK(positions.locate(1).step_index == 1u);
-    CHECK(positions.locate(2).global_game_index == 1u);
-    CHECK(positions.locate(2).step_index == 0u);
-    CHECK(positions.locate(6).global_game_index == 1u);
-    CHECK(positions.locate(6).step_index == 4u);
+        CHECK(positions.locate(0).global_game_index == 0u);
+        CHECK(positions.locate(0).step_index == 0u);
+        CHECK(positions.locate(1).global_game_index == 0u);
+        CHECK(positions.locate(1).step_index == 1u);
+        CHECK(positions.locate(2).global_game_index == 1u);
+        CHECK(positions.locate(2).step_index == 0u);
+        CHECK(positions.locate(6).global_game_index == 1u);
+        CHECK(positions.locate(6).step_index == 4u);
 
-    SequenceTargetConfig config;
-    config.unroll_steps = 2;
-    config.td_steps = 2;
-    config.discount = 0.5f;
-    KStepReplaySampler sampler(dataset, config, 1234567);
-    const KStepBatch batch = sampler.sample_batch(8);
-    CHECK(batch.batch_size == 8);
-    CHECK(batch.unroll_steps == 2);
-    CHECK(batch.initial_observations.size() == static_cast<size_t>(8 * kObservationSize));
-    CHECK(batch.actions.size() == 16u);
-    CHECK(batch.value_targets.size() == 24u);
-    CHECK(batch.policy_targets.size() == static_cast<size_t>(24 * kActionSpaceSize));
-    CHECK(batch.legal_masks.size() == static_cast<size_t>(24 * kActionSpaceSize));
-    CHECK(k_step_batch_payload_bytes(batch) > 0u);
-    CHECK(std::isfinite(k_step_batch_checksum(batch)));
+        SequenceTargetConfig config;
+        config.unroll_steps = 2;
+        config.td_steps = 2;
+        config.discount = 0.5f;
+        KStepReplaySampler sampler(dataset, config, 1234567);
+        const KStepBatch batch = sampler.sample_batch(8);
+        CHECK(batch.batch_size == 8);
+        CHECK(batch.unroll_steps == 2);
+        CHECK(batch.initial_observations.size() == static_cast<size_t>(8 * kObservationSize));
+        CHECK(batch.actions.size() == 16u);
+        CHECK(batch.value_targets.size() == 24u);
+        CHECK(batch.policy_targets.size() == static_cast<size_t>(24 * kActionSpaceSize));
+        CHECK(batch.legal_masks.size() == static_cast<size_t>(24 * kActionSpaceSize));
+        CHECK(k_step_batch_payload_bytes(batch) > 0u);
+        CHECK(std::isfinite(k_step_batch_checksum(batch)));
+    }
 
     std::filesystem::remove(path);
 }
