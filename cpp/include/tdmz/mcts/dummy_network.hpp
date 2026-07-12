@@ -25,9 +25,11 @@ private:
         out.values.assign(batch_size, 0.5f);
         out.rewards.assign(batch_size, 0.0f);
         out.policy_logits.resize(batch_size, std::vector<float>(kActionSpaceSize, -10.0f));
+        out.legality_logits.resize(batch_size, std::vector<float>(kActionSpaceSize, 0.0f));
 
         for (int i = 0; i < batch_size; ++i) {
             out.policy_logits[i][kFlatWaitOffset] = 1.0f;
+            out.legality_logits[i][kFlatWaitOffset] = 1.0f;
             for (int a = 0; a < kActionSpaceSize; ++a) {
                 if (a % 17 == 0) out.policy_logits[i][a] = 0.2f;
             }
