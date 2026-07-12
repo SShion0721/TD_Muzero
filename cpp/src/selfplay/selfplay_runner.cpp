@@ -76,6 +76,13 @@ GameHistory SelfPlayRunner::run(TDEngine& env, INetworkEvaluator& evaluator) con
         }
     }
 
+    if (!history.terminal
+        && history.steps.size() == static_cast<size_t>(std::max(0, cfg_.max_steps))) {
+        history.truncated = true;
+    }
+    if (history.terminal && history.truncated) {
+        throw std::runtime_error("Self-play history cannot be both terminal and truncated");
+    }
     return history;
 }
 
