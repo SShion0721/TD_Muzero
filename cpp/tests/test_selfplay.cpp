@@ -27,6 +27,7 @@ void test_selfplay_dummy_history() {
     auto history = runner.run(net);
 
     CHECK_TRUE(history.seed == cfg.seed);
+    CHECK_TRUE(history.wave_mode == WaveMode::Fixed);
     CHECK_TRUE(!history.steps.empty());
     CHECK_TRUE(history.steps.size() <= static_cast<size_t>(cfg.max_steps));
 
@@ -43,7 +44,7 @@ void test_selfplay_dummy_history() {
     }
 }
 
-void test_external_environment_seed_is_authoritative() {
+void test_external_environment_provenance_is_authoritative() {
     SelfPlayConfig cfg;
     cfg.seed = 7;
     cfg.max_steps = 1;
@@ -51,11 +52,12 @@ void test_external_environment_seed_is_authoritative() {
     cfg.mcts.latent_top_k = 2;
     cfg.mcts.max_nodes = 2048;
 
-    TDEngine env(11, 11, 99);
+    TDEngine env(11, 11, 99, true);
     DummyNetwork net;
     SelfPlayRunner runner(cfg);
     const auto history = runner.run(env, net);
     CHECK_TRUE(history.seed == 99);
+    CHECK_TRUE(history.wave_mode == WaveMode::Budgeted);
 }
 
 void test_selfplay_jsonl_writer() {
@@ -88,7 +90,7 @@ void test_selfplay_jsonl_writer() {
 
 int main() {
     test_selfplay_dummy_history();
-    test_external_environment_seed_is_authoritative();
+    test_external_environment_provenance_is_authoritative();
     test_selfplay_jsonl_writer();
     std::cout << "Self-play tests passed!" << std::endl;
     return 0;
