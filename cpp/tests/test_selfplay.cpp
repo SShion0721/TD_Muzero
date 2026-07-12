@@ -30,6 +30,10 @@ void test_selfplay_dummy_history() {
     CHECK_TRUE(history.wave_mode == WaveMode::Fixed);
     CHECK_TRUE(!history.steps.empty());
     CHECK_TRUE(history.steps.size() <= static_cast<size_t>(cfg.max_steps));
+    CHECK_TRUE(history.completed());
+    CHECK_TRUE(history.terminal != history.truncated);
+    CHECK_TRUE(history.truncated);
+    CHECK_TRUE(!history.terminal);
 
     for (const auto& step : history.steps) {
         CHECK_TRUE(step.action >= 0);
@@ -41,6 +45,7 @@ void test_selfplay_dummy_history() {
         for (float p : step.policy_target) sum += p;
         CHECK_TRUE(std::abs(sum - 1.0f) < 1e-4f);
         CHECK_TRUE(step.legal_mask[step.action] == 1);
+        CHECK_TRUE(!step.done);
     }
 }
 
@@ -58,6 +63,8 @@ void test_external_environment_provenance_is_authoritative() {
     const auto history = runner.run(env, net);
     CHECK_TRUE(history.seed == 99);
     CHECK_TRUE(history.wave_mode == WaveMode::Budgeted);
+    CHECK_TRUE(history.truncated);
+    CHECK_TRUE(!history.terminal);
 }
 
 void test_selfplay_jsonl_writer() {
