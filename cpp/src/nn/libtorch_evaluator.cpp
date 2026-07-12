@@ -1,6 +1,7 @@
 #include "tdmz/nn/libtorch_evaluator.hpp"
 #include "tdmz/core/action.hpp"
 #include "tdmz/core/observation.hpp"
+#include <cmath>
 #include <stdexcept>
 
 namespace tdmz {
@@ -32,17 +33,27 @@ torch::Tensor LibTorchEvaluator::observations_to_tensor(const std::vector<std::v
 }
 
 EvalOutput LibTorchEvaluator::to_eval_output(const NetworkOutput& out) const {
-    if (!out.value.defined() || !out.reward.defined() || !out.policy_logits.defined()) {
+    if (!out.value.defined()
+        || !out.reward.defined()
+        || !out.policy_logits.defined()
+        || !out.legality_logits.defined()) {
         throw std::runtime_error("network returned an undefined output tensor");
     }
     if (out.policy_logits.dim() != 2 || out.policy_logits.size(1) != kActionSpaceSize) {
         throw std::runtime_error("network policy tensor has an invalid shape");
     }
+    if (out.legality_logits.dim() != 2 || out.legality_logits.size(1) != kActionSpaceSize) {
+        throw std::runtime_error("network legality tensor has an invalid shape");
+    }
+    if (out.legality_logits.size(0) != out.policy_logits.size(0)) {
+        throw std::runtime_error("network legality batch does not match policy batch");
+    }
 
     auto values = out.value.detach().to(torch::kCPU).view({-1}).contiguous();
     auto rewards = out.reward.detach().to(torch::kCPU).view({-1}).contiguous();
-    auto logits = out.policy_logits.detach().to(torch::kCPU).contiguous();
-    int batch = static_cast<int>(logits.size(0));
+    auto policy = out.policy_logits.detach().to(torch::kCPU).contiguous();
+    auto legality = out.legality_logits.detach().to(torch::kCPU).contiguous();
+    const int batch = static_cast<int>(policy.size(0));
     if (values.size(0) != batch || rewards.size(0) != batch) {
         throw std::runtime_error("network value/reward batch does not match policy batch");
     }
@@ -51,13 +62,27 @@ EvalOutput LibTorchEvaluator::to_eval_output(const NetworkOutput& out) const {
     eval.values.resize(batch);
     eval.rewards.resize(batch);
     eval.policy_logits.resize(batch, std::vector<float>(kActionSpaceSize, 0.0f));
+    eval.legality_logits.resize(batch, std::vector<float>(kActionSpaceSize, 0.0f));
     auto v = values.accessor<float, 1>();
     auto r = rewards.accessor<float, 1>();
-    auto l = logits.accessor<float, 2>();
+    auto p = policy.accessor<float, 2>();
+    auto l = legality.accessor<float, 2>();
     for (int b = 0; b < batch; ++b) {
+        if (!std::isfinite(v[b]) || !std::isfinite(r[b])) {
+            throw std::runtime_error("network returned a non-finite value or reward");
+        }
         eval.values[b] = v[b];
         eval.rewards[b] = r[b];
-        for (int a = 0; a < kActionSpaceSize; ++a) eval.policy_logits[b][a] = l[b][a];
+        for (int a = 0; a < kActionSpaceSize; ++a) {
+            if (!std::isfinite(p[b][a])) {
+                throw std::runtime_error("network returned a non-finite policy logit");
+            }
+            if (!std::isfinite(l[b][a])) {
+                throw std::runtime_error("network returned a non-finite legality logit");
+            }
+            eval.policy_logits[b][a] = p[b][a];
+            eval.legality_logits[b][a] = l[b][a];
+        }
     }
     return eval;
 }
