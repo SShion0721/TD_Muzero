@@ -26,6 +26,7 @@ set(TDMZ_CORE_SOURCES
     src/selfplay/training_replay.cpp
     src/selfplay/trajectory_writer.cpp
     src/selfplay/transition_shard.cpp
+    src/training/legality.cpp
     src/balance/attack_budget.cpp
     src/balance/budgeted_wave_generator.cpp
     src/balance/defense_capacity.cpp
@@ -41,6 +42,7 @@ if(TDMZ_ENABLE_TORCH)
     set(TDMZ_NN_SOURCES
         src/nn/action_encoder.cpp
         src/nn/dynamics.cpp
+        src/nn/legality_loss.cpp
         src/nn/libtorch_evaluator.cpp
         src/nn/muzero_network.cpp
         src/nn/prediction.cpp
