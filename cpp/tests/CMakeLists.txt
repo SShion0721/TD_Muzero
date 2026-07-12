@@ -74,6 +74,10 @@ add_executable(test_mcts test_mcts.cpp)
 target_link_libraries(test_mcts tdmz_core)
 add_test(NAME test_mcts COMMAND test_mcts)
 
+add_executable(test_legality_transport test_legality_transport.cpp)
+target_link_libraries(test_legality_transport tdmz_core)
+add_test(NAME test_legality_transport COMMAND test_legality_transport)
+
 add_executable(test_mcts_scratch_reuse test_mcts_scratch_reuse.cpp)
 target_link_libraries(test_mcts_scratch_reuse tdmz_core)
 add_test(NAME test_mcts_scratch_reuse COMMAND test_mcts_scratch_reuse)
