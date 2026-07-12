@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <vector>
 #include "tdmz/core/observation.hpp"
+#include "tdmz/core/wave_mode.hpp"
 
 namespace tdmz {
 
@@ -27,6 +28,7 @@ struct GameHistory {
     int max_steps = 0;
     bool terminal = false;
     float total_reward = 0.0f;
+    WaveMode wave_mode = WaveMode::Unknown;
     std::vector<TrajectoryStep> steps;
 };
 
