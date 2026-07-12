@@ -23,6 +23,7 @@ set(TDMZ_CORE_SOURCES
     src/persistence/checkpoint_manifest.cpp
     src/selfplay/replay_dataset_v2.cpp
     src/selfplay/selfplay_runner.cpp
+    src/selfplay/training_replay.cpp
     src/selfplay/trajectory_writer.cpp
     src/selfplay/transition_shard.cpp
     src/balance/attack_budget.cpp
