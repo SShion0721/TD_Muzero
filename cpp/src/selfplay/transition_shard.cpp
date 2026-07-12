@@ -16,6 +16,7 @@
 #include <system_error>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -27,7 +28,8 @@
 namespace tdmz {
 namespace {
 
-constexpr char kTransitionMagic[8] = {'T', 'D', 'M', 'Z', 'S', 'H', 'D', '2'};
+constexpr char kTransitionMagic[8] = {'T', 'D', 'M', 'Z', 'S', 'H', 'D', '3'};
+constexpr char kLegacyTransitionMagic[8] = {'T', 'D', 'M', 'Z', 'S', 'H', 'D', '2'};
 
 #pragma pack(push, 1)
 struct TransitionShardHeader {
@@ -48,9 +50,15 @@ struct TransitionGameEntry {
     uint64_t seed;
     int32_t max_steps;
     uint32_t terminal;
+    uint32_t truncated;
+    uint32_t wave_mode;
     float total_reward;
     uint32_t step_count;
+    uint32_t has_bootstrap_state;
+    uint32_t reserved;
     uint64_t first_step_index;
+    uint64_t bootstrap_payload_offset;
+    uint64_t bootstrap_payload_size;
 };
 
 struct TransitionStepEntry {
@@ -69,12 +77,22 @@ struct TransitionStepHeader {
     int32_t wave;
     float time;
 };
+
+struct TransitionBootstrapHeader {
+    float root_value;
+};
 #pragma pack(pop)
 
 static_assert(sizeof(TransitionShardHeader) == 64, "Unexpected transition shard header size");
-static_assert(sizeof(TransitionGameEntry) == 32, "Unexpected transition game entry size");
+static_assert(sizeof(TransitionGameEntry) == 64, "Unexpected transition game entry size");
 static_assert(sizeof(TransitionStepEntry) == 16, "Unexpected transition step entry size");
 static_assert(sizeof(TransitionStepHeader) == 36, "Unexpected transition step header size");
+static_assert(sizeof(TransitionBootstrapHeader) == 4, "Unexpected transition bootstrap header size");
+
+struct PayloadInterval {
+    uint64_t offset = 0;
+    uint64_t size = 0;
+};
 
 namespace fs = std::filesystem;
 std::atomic<uint64_t> g_transition_temp_counter{0};
@@ -167,18 +185,41 @@ void publish_temp_file(const std::string& temp_path, const std::string& final_pa
 #endif
 }
 
-uint64_t step_payload_size(uint32_t observation_size, uint32_t policy_size, uint32_t legal_size) {
-    uint64_t result = sizeof(TransitionStepHeader);
-    result = checked_add_u64(
-        result,
-        checked_mul_u64(observation_size, sizeof(float), "observation payload"),
-        "step payload");
+uint64_t tensor_payload_size(
+    uint32_t observation_size,
+    uint32_t policy_size,
+    uint32_t legal_size
+) {
+    uint64_t result = checked_mul_u64(
+        observation_size, sizeof(float), "observation payload");
     result = checked_add_u64(
         result,
         checked_mul_u64(policy_size, sizeof(float), "policy payload"),
-        "step payload");
-    result = checked_add_u64(result, legal_size, "step payload");
+        "tensor payload");
+    result = checked_add_u64(result, legal_size, "tensor payload");
     return result;
+}
+
+uint64_t step_payload_size(
+    uint32_t observation_size,
+    uint32_t policy_size,
+    uint32_t legal_size
+) {
+    return checked_add_u64(
+        sizeof(TransitionStepHeader),
+        tensor_payload_size(observation_size, policy_size, legal_size),
+        "step payload");
+}
+
+uint64_t bootstrap_payload_size(
+    uint32_t observation_size,
+    uint32_t policy_size,
+    uint32_t legal_size
+) {
+    return checked_add_u64(
+        sizeof(TransitionBootstrapHeader),
+        tensor_payload_size(observation_size, policy_size, legal_size),
+        "bootstrap payload");
 }
 
 void validate_step_scalars(const TransitionStepHeader& header) {
@@ -191,9 +232,48 @@ void validate_step_scalars(const TransitionStepHeader& header) {
 }
 
 void validate_history_metadata(const GameHistory& history) {
-    if (history.max_steps < 0) throw std::runtime_error("Transition history max_steps is negative");
+    if (history.max_steps < 0) {
+        throw std::runtime_error("Transition history max_steps is negative");
+    }
     if (!std::isfinite(history.total_reward)) {
         throw std::runtime_error("Transition history total_reward is non-finite");
+    }
+    if (!wave_mode_is_known(history.wave_mode)) {
+        throw std::runtime_error("Transition history requires explicit fixed or budgeted wave mode");
+    }
+    if (history.terminal && history.truncated) {
+        throw std::runtime_error("Transition history cannot be both terminal and truncated");
+    }
+    if (!history.completed()) {
+        throw std::runtime_error("Transition history must be terminal or truncated");
+    }
+    if (history.truncated
+        && history.steps.size() != static_cast<size_t>(history.max_steps)) {
+        throw std::runtime_error("Truncated transition history must contain max_steps transitions");
+    }
+
+    int done_count = 0;
+    for (size_t index = 0; index < history.steps.size(); ++index) {
+        const auto& step = history.steps[index];
+        if (step.done) {
+            ++done_count;
+            if (index + 1 != history.steps.size()) {
+                throw std::runtime_error("Transition done flag may appear only on the final step");
+            }
+        }
+    }
+    if (history.terminal && done_count != 1) {
+        throw std::runtime_error("Terminal transition history must end with one done step");
+    }
+    if (history.truncated && done_count != 0) {
+        throw std::runtime_error("Truncated transition history must not contain done steps");
+    }
+    if (history.bootstrap_state && !history.truncated) {
+        throw std::runtime_error("Only truncated histories may contain a bootstrap state");
+    }
+    if (history.bootstrap_state
+        && !std::isfinite(history.bootstrap_state->root_value)) {
+        throw std::runtime_error("Transition bootstrap root value is non-finite");
     }
 }
 
@@ -277,18 +357,36 @@ struct TransitionShardWriter::Impl {
         }
     }
 
-    void establish_or_validate_shapes(const TrajectoryStep& step) {
-        const uint32_t obs = checked_u32(step.observation.size(), "observation_size");
-        const uint32_t policy = checked_u32(step.policy_target.size(), "policy_size");
-        const uint32_t legal = checked_u32(step.legal_mask.size(), "legal_mask_size");
+    void establish_or_validate_shapes(
+        size_t observation_count,
+        size_t policy_count,
+        size_t legal_count
+    ) {
+        const uint32_t obs = checked_u32(observation_count, "observation_size");
+        const uint32_t policy = checked_u32(policy_count, "policy_size");
+        const uint32_t legal = checked_u32(legal_count, "legal_mask_size");
         if (!shapes_initialized) {
             observation_size = obs;
             policy_size = policy;
             legal_mask_size = legal;
             shapes_initialized = true;
         } else if (obs != observation_size || policy != policy_size || legal != legal_mask_size) {
-            throw std::runtime_error("All transition shard steps must have identical tensor sizes");
+            throw std::runtime_error("All transition shard states must have identical tensor sizes");
         }
+    }
+
+    void establish_or_validate_shapes(const TrajectoryStep& step) {
+        establish_or_validate_shapes(
+            step.observation.size(),
+            step.policy_target.size(),
+            step.legal_mask.size());
+    }
+
+    void establish_or_validate_shapes(const BootstrapState& state) {
+        establish_or_validate_shapes(
+            state.observation.size(),
+            state.policy_target.size(),
+            state.legal_mask.size());
     }
 
     void write_history(const GameHistory& history) {
@@ -302,6 +400,8 @@ struct TransitionShardWriter::Impl {
         game.seed = history.seed;
         game.max_steps = history.max_steps;
         game.terminal = history.terminal ? 1u : 0u;
+        game.truncated = history.truncated ? 1u : 0u;
+        game.wave_mode = static_cast<uint32_t>(history.wave_mode);
         game.total_reward = history.total_reward;
         game.step_count = checked_u32(history.steps.size(), "step_count");
         game.first_step_index = static_cast<uint64_t>(steps.size());
@@ -342,6 +442,30 @@ struct TransitionShardWriter::Impl {
             steps.push_back(entry);
         }
 
+        if (history.bootstrap_state) {
+            establish_or_validate_shapes(*history.bootstrap_state);
+            game.has_bootstrap_state = 1u;
+            game.bootstrap_payload_offset = stream_output_position(out);
+
+            TransitionBootstrapHeader header{};
+            header.root_value = history.bootstrap_state->root_value;
+            write_raw(out, header);
+            write_vector(out, history.bootstrap_state->observation);
+            write_vector(out, history.bootstrap_state->policy_target);
+            write_vector(out, history.bootstrap_state->legal_mask);
+
+            game.bootstrap_payload_size =
+                stream_output_position(out) - game.bootstrap_payload_offset;
+            const uint64_t expected_payload = bootstrap_payload_size(
+                observation_size, policy_size, legal_mask_size);
+            if (game.bootstrap_payload_size != expected_payload) {
+                throw std::runtime_error("Transition bootstrap payload size mismatch while writing");
+            }
+        }
+
+        if (!shapes_initialized) {
+            throw std::runtime_error("Transition history contains no serializable state tensors");
+        }
         games.push_back(game);
     }
 
@@ -438,13 +562,19 @@ struct TransitionShardReader::Impl {
         }
 
         read_raw(in, header);
+        if (std::memcmp(header.magic, kLegacyTransitionMagic, sizeof(kLegacyTransitionMagic)) == 0) {
+            throw std::runtime_error(
+                "Transition shard v2 is obsolete for training; regenerate explicit v3 replay data");
+        }
         if (std::memcmp(header.magic, kTransitionMagic, sizeof(kTransitionMagic)) != 0) {
             throw std::runtime_error("Invalid transition shard magic");
         }
         if (header.version != kTransitionShardFormatVersion) {
             throw std::runtime_error("Unsupported transition shard version");
         }
-        if (header.reserved != 0) throw std::runtime_error("Invalid transition shard reserved field");
+        if (header.reserved != 0) {
+            throw std::runtime_error("Invalid transition shard reserved field");
+        }
         if (header.file_size != actual_size) {
             throw std::runtime_error("Transition shard file size does not match header");
         }
@@ -474,11 +604,27 @@ struct TransitionShardReader::Impl {
         for (auto& step : steps) read_raw(in, step);
 
         uint64_t expected_first_step = 0;
+        std::vector<PayloadInterval> payloads;
+        payloads.reserve(steps.size() + games.size());
         for (const auto& game : games) {
-            if (game.terminal > 1u) throw std::runtime_error("Invalid transition game terminal flag");
-            if (game.max_steps < 0) throw std::runtime_error("Invalid transition game max_steps");
+            if (game.terminal > 1u || game.truncated > 1u || game.has_bootstrap_state > 1u) {
+                throw std::runtime_error("Invalid transition game boolean flag");
+            }
+            if (game.terminal != 0u && game.truncated != 0u) {
+                throw std::runtime_error("Transition game is both terminal and truncated");
+            }
+            if (game.terminal == 0u && game.truncated == 0u) {
+                throw std::runtime_error("Transition game is neither terminal nor truncated");
+            }
+            if (game.max_steps < 0) {
+                throw std::runtime_error("Invalid transition game max_steps");
+            }
             if (!std::isfinite(game.total_reward)) {
                 throw std::runtime_error("Invalid transition game total_reward");
+            }
+            (void)wave_mode_from_u32(game.wave_mode);
+            if (game.reserved != 0u) {
+                throw std::runtime_error("Invalid transition game reserved field");
             }
             if (game.first_step_index != expected_first_step) {
                 throw std::runtime_error("Transition game step ranges are not contiguous");
@@ -488,32 +634,54 @@ struct TransitionShardReader::Impl {
             if (expected_first_step > header.total_step_count) {
                 throw std::runtime_error("Transition game step range exceeds step table");
             }
+            if (game.has_bootstrap_state != 0u) {
+                if (game.truncated == 0u) {
+                    throw std::runtime_error("Only truncated games may contain a bootstrap state");
+                }
+                const uint64_t expected_bootstrap = bootstrap_payload_size(
+                    header.observation_size, header.policy_size, header.legal_mask_size);
+                if (game.bootstrap_payload_size != expected_bootstrap) {
+                    throw std::runtime_error("Transition bootstrap payload size is incompatible with shard tensors");
+                }
+                payloads.push_back({
+                    game.bootstrap_payload_offset,
+                    game.bootstrap_payload_size});
+            } else if (game.bootstrap_payload_offset != 0u
+                       || game.bootstrap_payload_size != 0u) {
+                throw std::runtime_error("Transition game has bootstrap offsets without a bootstrap state");
+            }
         }
         if (expected_first_step != header.total_step_count) {
             throw std::runtime_error("Transition game step ranges do not cover step table");
         }
 
-        const uint64_t expected_payload_size = step_payload_size(
+        const uint64_t expected_step_payload = step_payload_size(
             header.observation_size, header.policy_size, header.legal_mask_size);
-        uint64_t previous_end = sizeof(TransitionShardHeader);
         for (const auto& step : steps) {
-            if (step.payload_size != expected_payload_size) {
+            if (step.payload_size != expected_step_payload) {
                 throw std::runtime_error("Transition step payload size is incompatible with shard tensors");
             }
-            if (step.payload_offset != previous_end) {
-                throw std::runtime_error("Transition step payloads are not contiguous");
+            payloads.push_back({step.payload_offset, step.payload_size});
+        }
+
+        std::sort(
+            payloads.begin(), payloads.end(),
+            [](const PayloadInterval& left, const PayloadInterval& right) {
+                return left.offset < right.offset;
+            });
+        uint64_t previous_end = sizeof(TransitionShardHeader);
+        for (const auto& payload : payloads) {
+            if (payload.offset != previous_end) {
+                throw std::runtime_error("Transition payload region has gaps or overlaps");
             }
             previous_end = checked_add_u64(
-                step.payload_offset, step.payload_size, "transition payload end");
+                payload.offset, payload.size, "transition payload end");
             if (previous_end > header.game_table_offset) {
-                throw std::runtime_error("Transition step payload overlaps index tables");
+                throw std::runtime_error("Transition payload overlaps index tables");
             }
         }
         if (previous_end != header.game_table_offset) {
-            throw std::runtime_error("Transition payload region has gaps or trailing bytes");
-        }
-        if (steps.empty() && header.game_table_offset != sizeof(TransitionShardHeader)) {
-            throw std::runtime_error("Empty transition shard has unexpected payload bytes");
+            throw std::runtime_error("Transition payload region has trailing bytes");
         }
     }
 
@@ -527,16 +695,36 @@ struct TransitionShardReader::Impl {
     }
 
     const TransitionGameEntry& game_at(size_t game_index) const {
-        if (game_index >= games.size()) throw std::runtime_error("Transition game index out of range");
+        if (game_index >= games.size()) {
+            throw std::runtime_error("Transition game index out of range");
+        }
         return games[game_index];
     }
 
     const TransitionStepEntry& step_at(size_t game_index, size_t step_index) const {
         const auto& game = game_at(game_index);
-        if (step_index >= game.step_count) throw std::runtime_error("Transition step index out of range");
+        if (step_index >= game.step_count) {
+            throw std::runtime_error("Transition step index out of range");
+        }
         const uint64_t global_step = game.first_step_index + step_index;
-        if (global_step >= steps.size()) throw std::runtime_error("Transition global step index out of range");
+        if (global_step >= steps.size()) {
+            throw std::runtime_error("Transition global step index out of range");
+        }
         return steps[static_cast<size_t>(global_step)];
+    }
+
+    ReplayGameMetadata game_metadata(size_t game_index) const {
+        const auto& game = game_at(game_index);
+        ReplayGameMetadata metadata;
+        metadata.seed = game.seed;
+        metadata.max_steps = game.max_steps;
+        metadata.terminal = game.terminal != 0u;
+        metadata.truncated = game.truncated != 0u;
+        metadata.wave_mode = wave_mode_from_u32(game.wave_mode);
+        metadata.total_reward = game.total_reward;
+        metadata.step_count = static_cast<size_t>(game.step_count);
+        metadata.has_bootstrap_state = game.has_bootstrap_state != 0u;
+        return metadata;
     }
 
     void read_step_into(
@@ -577,6 +765,41 @@ struct TransitionShardReader::Impl {
         ++stats.physical_read_operations;
         stats.physical_bytes_read = checked_add_u64(
             stats.physical_bytes_read, entry.payload_size, "physical bytes read");
+    }
+
+    BootstrapState read_bootstrap_state(size_t game_index) {
+        const auto& game = game_at(game_index);
+        if (game.has_bootstrap_state == 0u) {
+            throw std::runtime_error("Transition game has no bootstrap state");
+        }
+        seek(game.bootstrap_payload_offset, "bootstrap payload");
+
+        TransitionBootstrapHeader bootstrap_header{};
+        read_raw(in, bootstrap_header);
+        if (!std::isfinite(bootstrap_header.root_value)) {
+            throw std::runtime_error("Non-finite transition bootstrap root value");
+        }
+
+        BootstrapState state;
+        state.root_value = bootstrap_header.root_value;
+        state.observation.resize(static_cast<size_t>(header.observation_size));
+        state.policy_target.resize(static_cast<size_t>(header.policy_size));
+        state.legal_mask.resize(static_cast<size_t>(header.legal_mask_size));
+        read_vector_into(in, state.observation.data(), state.observation.size());
+        read_vector_into(in, state.policy_target.data(), state.policy_target.size());
+        read_vector_into(in, state.legal_mask.data(), state.legal_mask.size());
+
+        const uint64_t consumed = stream_input_position(in) - game.bootstrap_payload_offset;
+        if (consumed != game.bootstrap_payload_size) {
+            throw std::runtime_error("Transition bootstrap read ended at an unexpected position");
+        }
+
+        ++stats.physical_read_operations;
+        stats.physical_bytes_read = checked_add_u64(
+            stats.physical_bytes_read,
+            game.bootstrap_payload_size,
+            "physical bytes read");
+        return state;
     }
 
     std::string path;
@@ -631,6 +854,10 @@ const std::string& TransitionShardReader::path() const {
     return impl_->path;
 }
 
+ReplayGameMetadata TransitionShardReader::game_metadata(size_t game_index) const {
+    return impl_->game_metadata(game_index);
+}
+
 void TransitionShardReader::read_step_into(
     size_t game_index,
     size_t step_index,
@@ -666,16 +893,25 @@ TrajectoryStep TransitionShardReader::read_step(size_t game_index, size_t step_i
     return result;
 }
 
+BootstrapState TransitionShardReader::read_bootstrap_state(size_t game_index) {
+    return impl_->read_bootstrap_state(game_index);
+}
+
 GameHistory TransitionShardReader::read_at(size_t game_index) {
-    const auto& game = impl_->game_at(game_index);
+    const ReplayGameMetadata metadata = game_metadata(game_index);
     GameHistory history;
-    history.seed = game.seed;
-    history.max_steps = game.max_steps;
-    history.terminal = game.terminal != 0;
-    history.total_reward = game.total_reward;
-    history.steps.reserve(game.step_count);
-    for (size_t step = 0; step < game.step_count; ++step) {
+    history.seed = metadata.seed;
+    history.max_steps = metadata.max_steps;
+    history.terminal = metadata.terminal;
+    history.truncated = metadata.truncated;
+    history.wave_mode = metadata.wave_mode;
+    history.total_reward = metadata.total_reward;
+    history.steps.reserve(metadata.step_count);
+    for (size_t step = 0; step < metadata.step_count; ++step) {
         history.steps.push_back(read_step(game_index, step));
+    }
+    if (metadata.has_bootstrap_state) {
+        history.bootstrap_state = read_bootstrap_state(game_index);
     }
     return history;
 }
@@ -693,8 +929,11 @@ bool is_transition_shard_v2(const std::string& path) {
     if (!in) throw std::runtime_error("Failed to open replay shard path: " + path);
     char magic[8]{};
     in.read(magic, sizeof(magic));
-    if (!in) throw std::runtime_error("Replay shard is too small to contain a magic value: " + path);
-    return std::memcmp(magic, kTransitionMagic, sizeof(kTransitionMagic)) == 0;
+    if (!in) {
+        throw std::runtime_error("Replay shard is too small to contain a magic value: " + path);
+    }
+    return std::memcmp(magic, kTransitionMagic, sizeof(kTransitionMagic)) == 0
+        || std::memcmp(magic, kLegacyTransitionMagic, sizeof(kLegacyTransitionMagic)) == 0;
 }
 
 struct AsyncTransitionShardWriter::Impl {
