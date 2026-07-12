@@ -27,8 +27,6 @@ WaveMode read_index_wave_mode(const std::string& index_path) {
         return parse_wave_mode(match[1].str());
     }
 
-    // Current generator indexes already contain an explicit boolean mode. Keep
-    // accepting it while future producers migrate to the clearer string field.
     const std::regex budgeted_mode("\\\"budgeted\\\"\\s*:\\s*(true|false)");
     if (std::regex_search(text, match, budgeted_mode)) {
         return match[1].str() == "true" ? WaveMode::Budgeted : WaveMode::Fixed;
@@ -67,10 +65,10 @@ void TrainingReplayDataset::validate_current_training_contract() const {
         throw std::runtime_error("Training replay requires an explicit fixed or budgeted wave mode");
     }
     if (!replay_.transition_indexed()) {
-        throw std::runtime_error("Training replay requires transition-indexed v2 shards");
+        throw std::runtime_error("Training replay requires transition-indexed v3 shards");
     }
     if (replay_.replay_format_version() != kReplayBinaryFormatVersion) {
-        throw std::runtime_error("Training replay format version is not current");
+        throw std::runtime_error("Training replay format version is not current v3");
     }
     if (replay_.observation_size() != kObservationSize) {
         throw std::runtime_error("Training replay observation_size is not the current 40x11x11 schema");
@@ -85,20 +83,22 @@ void TrainingReplayDataset::validate_current_training_contract() const {
 
 GameHistory TrainingReplayDataset::read_game(size_t game_index) {
     GameHistory history = replay_.read_game(game_index);
-    history.wave_mode = wave_mode_;
-
-    // Transition shard v2 predates an explicit truncated bit. For current
-    // self-play data the cutoff is losslessly derivable from max_steps and the
-    // stored step count. Keep the derivation at the training boundary so old
-    // diagnostic readers retain their original binary interpretation.
-    if (!history.terminal
-        && !history.truncated
-        && history.max_steps >= 0
-        && history.steps.size() == static_cast<size_t>(history.max_steps)) {
-        history.truncated = true;
+    if (history.wave_mode != wave_mode_) {
+        throw std::runtime_error(
+            "Training replay shard wave mode disagrees with index/direct provenance");
     }
     if (history.terminal && history.truncated) {
         throw std::runtime_error("Training replay episode is both terminal and truncated");
+    }
+    if (!history.completed()) {
+        throw std::runtime_error("Training replay episode is neither terminal nor truncated");
+    }
+    if (history.truncated && !history.bootstrap_state) {
+        throw std::runtime_error(
+            "Current v3 truncated training replay requires an explicit cutoff bootstrap state");
+    }
+    if (history.terminal && history.bootstrap_state) {
+        throw std::runtime_error("Terminal training replay must not contain a cutoff bootstrap state");
     }
     return history;
 }
