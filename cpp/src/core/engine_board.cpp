@@ -151,6 +151,7 @@ bool TDEngine::can_place_tower(int x, int y, TowerType type) const {
 bool TDEngine::place_tower(int x, int y, TowerType type) {
     if (game_over_ || !can_place_tower(x, y, type)) return false;
 
+    episode_started_ = true;
     const auto stats = tower_stats(type);
     money_ -= stats.cost;
     grid_[y][x] = 1;
@@ -178,6 +179,7 @@ bool TDEngine::upgrade_tower(int x, int y) {
         if (tower.x != x || tower.y != y) continue;
         if (!tower.can_upgrade() || money_ < tower.upgrade_cost) return false;
 
+        episode_started_ = true;
         money_ -= tower.upgrade_cost;
         tower.upgrade();
         mark_money_changed();
@@ -193,6 +195,7 @@ bool TDEngine::sell_tower(int x, int y) {
     for (auto iterator = towers_.begin(); iterator != towers_.end(); ++iterator) {
         if (iterator->x != x || iterator->y != y) continue;
 
+        episode_started_ = true;
         const int refund = static_cast<int>(iterator->total_spent * 0.8f);
         money_ += refund;
         towers_.erase(iterator);
