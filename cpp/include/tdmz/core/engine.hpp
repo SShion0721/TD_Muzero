@@ -8,6 +8,7 @@
 #include "tdmz/core/enemy.hpp"
 #include "tdmz/core/pending_spawn_queue.hpp"
 #include "tdmz/core/rng.hpp"
+#include "tdmz/core/wave_mode.hpp"
 
 namespace tdmz {
 
@@ -78,6 +79,8 @@ public:
     uint64_t wave_version() const { return wave_version_; }
 
     bool use_budgeted_waves() const { return use_budgeted_waves_; }
+    WaveMode wave_mode() const { return wave_mode_from_budgeted(use_budgeted_waves_); }
+    bool episode_started() const { return episode_started_; }
     void set_use_budgeted_waves(bool enabled, bool regenerate_pending_wave = false);
 
     bool in_bounds(int x, int y) const;
@@ -103,6 +106,7 @@ private:
     float time_;
     bool game_over_;
     bool use_budgeted_waves_ = false;
+    bool episode_started_ = false;
 
     std::array<std::array<int, kBoardW>, kBoardH> grid_;
     Bitboard128 bb_blocked_;
