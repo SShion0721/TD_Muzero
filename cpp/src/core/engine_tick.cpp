@@ -22,6 +22,7 @@ int enemy_rounded_cell(const Enemy& enemy) {
 
 StepResult TDEngine::step_one_tick() {
     if (game_over_) return {0.0f, true};
+    episode_started_ = true;
 
     constexpr float dt = 1.0f;
     float step_reward = 0.0f;
@@ -87,7 +88,7 @@ StepResult TDEngine::step_one_tick() {
     if (use_bucket_targeting) {
         bucket_head.fill(-1);
         if (static_cast<int>(enemy_bucket_next_scratch_.size()) < enemy_count) {
-            enemy_bucket_next_scratch_.resize(static_cast<std::size_t>(enemy_count));
+            enemy_bucket_next_scratch_.resize(static_cast<size_t>(enemy_count));
         }
         std::fill(
             enemy_bucket_next_scratch_.begin(),
