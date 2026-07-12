@@ -28,29 +28,73 @@ void validate_config(const SequenceTargetConfig& config) {
     }
 }
 
-bool canonical_truncated(const GameHistory& history) {
-    if (history.truncated) return true;
-    return !history.terminal
-        && history.max_steps >= 0
-        && history.steps.size() == static_cast<size_t>(history.max_steps);
+void validate_state_payload(
+    float root_value,
+    const Observation& observation,
+    const std::vector<float>& policy_target,
+    const std::vector<uint8_t>& legal_mask,
+    const char* label
+) {
+    if (!std::isfinite(root_value)) {
+        throw std::invalid_argument(std::string(label) + " root value is non-finite");
+    }
+    if (observation.size() != static_cast<size_t>(kObservationSize)) {
+        throw std::invalid_argument(
+            std::string(label) + " observation does not match the current 40x11x11 schema");
+    }
+    if (policy_target.size() != static_cast<size_t>(kActionSpaceSize)) {
+        throw std::invalid_argument(
+            std::string(label) + " policy target does not match the 727-action schema");
+    }
+    if (legal_mask.size() != static_cast<size_t>(kActionSpaceSize)) {
+        throw std::invalid_argument(
+            std::string(label) + " legal mask does not match the 727-action schema");
+    }
+
+    double policy_sum = 0.0;
+    for (float probability : policy_target) {
+        if (!std::isfinite(probability) || probability < 0.0f) {
+            throw std::invalid_argument(
+                std::string(label) + " policy target must be finite and non-negative");
+        }
+        policy_sum += probability;
+    }
+    if (!std::isfinite(policy_sum) || std::fabs(policy_sum - 1.0) > 1e-4) {
+        throw std::invalid_argument(std::string(label) + " policy target must sum to one");
+    }
+    for (uint8_t legal : legal_mask) {
+        if (legal > 1u) {
+            throw std::invalid_argument(std::string(label) + " legal mask must be binary");
+        }
+    }
+    if (legal_mask[kFlatWaitOffset] == 0u) {
+        throw std::invalid_argument(
+            std::string(label) + " exact legal mask must keep Wait1 legal");
+    }
 }
 
 void validate_history(const GameHistory& history) {
-    if (history.terminal && canonical_truncated(history)) {
+    if (history.terminal && history.truncated) {
         throw std::invalid_argument("Replay episode cannot be both terminal and truncated");
     }
-    const bool truncated = canonical_truncated(history);
-    if (!history.terminal && !truncated) {
+    if (!history.completed()) {
         throw std::invalid_argument("K-step targets require a completed terminal or truncated episode");
-    }
-    if (history.steps.empty()) {
-        throw std::invalid_argument("K-step targets require at least one stored state");
     }
     if (history.max_steps < 0) {
         throw std::invalid_argument("Replay max_steps must be non-negative");
     }
-    if (truncated && history.steps.size() != static_cast<size_t>(history.max_steps)) {
+    if (history.truncated
+        && history.steps.size() != static_cast<size_t>(history.max_steps)) {
         throw std::invalid_argument("Truncated episode step count must equal max_steps");
+    }
+    if (history.bootstrap_state && !history.truncated) {
+        throw std::invalid_argument("Only truncated episodes may contain a bootstrap state");
+    }
+    if (history.terminal && history.steps.empty()) {
+        throw std::invalid_argument("Terminal replay episode must contain a final transition");
+    }
+    if (history.steps.empty() && !history.bootstrap_state) {
+        throw std::invalid_argument("K-step targets require at least one stored root state");
     }
 
     int done_count = 0;
@@ -62,39 +106,15 @@ void validate_history(const GameHistory& history) {
         if (step.action < 0 || step.action >= kActionSpaceSize) {
             throw std::invalid_argument("Replay action is outside the 727-action ABI");
         }
-        if (!std::isfinite(step.reward)
-            || !std::isfinite(step.root_value)
-            || !std::isfinite(step.time)) {
-            throw std::invalid_argument("Replay step contains a non-finite scalar");
+        if (!std::isfinite(step.reward) || !std::isfinite(step.time)) {
+            throw std::invalid_argument("Replay step contains a non-finite transition scalar");
         }
-        if (step.observation.size() != static_cast<size_t>(kObservationSize)) {
-            throw std::invalid_argument("Replay observation does not match the current 40x11x11 schema");
-        }
-        if (step.policy_target.size() != static_cast<size_t>(kActionSpaceSize)) {
-            throw std::invalid_argument("Replay policy target does not match the 727-action schema");
-        }
-        if (step.legal_mask.size() != static_cast<size_t>(kActionSpaceSize)) {
-            throw std::invalid_argument("Replay legal mask does not match the 727-action schema");
-        }
-
-        double policy_sum = 0.0;
-        for (float probability : step.policy_target) {
-            if (!std::isfinite(probability) || probability < 0.0f) {
-                throw std::invalid_argument("Replay policy target must be finite and non-negative");
-            }
-            policy_sum += probability;
-        }
-        if (!std::isfinite(policy_sum) || std::fabs(policy_sum - 1.0) > 1e-4) {
-            throw std::invalid_argument("Replay policy target must sum to one");
-        }
-        for (uint8_t legal : step.legal_mask) {
-            if (legal > 1u) {
-                throw std::invalid_argument("Replay legal mask must be binary");
-            }
-        }
-        if (step.legal_mask[kFlatWaitOffset] == 0u) {
-            throw std::invalid_argument("Replay exact legal mask must keep Wait1 legal");
-        }
+        validate_state_payload(
+            step.root_value,
+            step.observation,
+            step.policy_target,
+            step.legal_mask,
+            "Replay step");
         if (step.legal_mask[static_cast<size_t>(step.action)] == 0u) {
             throw std::invalid_argument("Replay selected action is masked illegal");
         }
@@ -110,16 +130,31 @@ void validate_history(const GameHistory& history) {
     if (history.terminal && done_count != 1) {
         throw std::invalid_argument("Terminal episode must end with exactly one done transition");
     }
-    if (truncated && done_count != 0) {
+    if (history.truncated && done_count != 0) {
         throw std::invalid_argument("Truncated episode must not contain a done transition");
+    }
+    if (history.bootstrap_state) {
+        validate_state_payload(
+            history.bootstrap_state->root_value,
+            history.bootstrap_state->observation,
+            history.bootstrap_state->policy_target,
+            history.bootstrap_state->legal_mask,
+            "Replay bootstrap state");
     }
 }
 
-void checked_add_size(size_t& value, size_t increment, const char* label) {
-    if (increment > std::numeric_limits<size_t>::max() - value) {
-        throw std::overflow_error(std::string(label) + " size overflow");
+size_t logical_state_count(const GameHistory& history) {
+    return history.steps.size() + (history.bootstrap_state ? 1u : 0u);
+}
+
+const Observation& state_observation(const GameHistory& history, size_t state_index) {
+    if (state_index < history.steps.size()) {
+        return history.steps[state_index].observation;
     }
-    value += increment;
+    if (state_index == history.steps.size() && history.bootstrap_state) {
+        return history.bootstrap_state->observation;
+    }
+    throw std::out_of_range("Replay state index is outside the episode");
 }
 
 std::pair<float, uint8_t> n_step_value_target(
@@ -128,6 +163,13 @@ std::pair<float, uint8_t> n_step_value_target(
     const SequenceTargetConfig& config
 ) {
     const size_t step_count = history.steps.size();
+    if (state_index == step_count && history.bootstrap_state) {
+        return {history.bootstrap_state->root_value, 1u};
+    }
+    if (state_index >= step_count) {
+        return {0.0f, 0u};
+    }
+
     double target = 0.0;
     double discount_power = 1.0;
     bool terminal_reached = false;
@@ -155,10 +197,22 @@ std::pair<float, uint8_t> n_step_value_target(
             * static_cast<double>(history.steps[bootstrap_index].root_value);
         return {static_cast<float>(target), 1u};
     }
+    if (bootstrap_index == step_count && history.bootstrap_state) {
+        target += discount_power
+            * static_cast<double>(history.bootstrap_state->root_value);
+        return {static_cast<float>(target), 1u};
+    }
 
-    // A truncated file does not currently store the post-cutoff state value.
-    // Its tail target is therefore explicitly invalid rather than treated as terminal.
+    // A truncated tail without a persisted cutoff bootstrap remains explicitly
+    // invalid instead of being treated as a zero-value terminal state.
     return {0.0f, 0u};
+}
+
+void checked_add_size(size_t& value, size_t increment, const char* label) {
+    if (increment > std::numeric_limits<size_t>::max() - value) {
+        throw std::overflow_error(std::string(label) + " size overflow");
+    }
+    value += increment;
 }
 
 } // namespace
@@ -170,7 +224,8 @@ KStepSample build_k_step_sample(
 ) {
     validate_config(config);
     validate_history(history);
-    if (start_step >= history.steps.size()) {
+    const size_t available_states = logical_state_count(history);
+    if (start_step >= available_states) {
         throw std::out_of_range("K-step start position is outside the episode");
     }
 
@@ -181,8 +236,8 @@ KStepSample build_k_step_sample(
     sample.policy_size = kActionSpaceSize;
     sample.legal_mask_size = kActionSpaceSize;
     sample.episode_terminal = history.terminal;
-    sample.episode_truncated = canonical_truncated(history);
-    sample.initial_observation = history.steps[start_step].observation;
+    sample.episode_truncated = history.truncated;
+    sample.initial_observation = state_observation(history, start_step);
 
     const size_t transition_count = static_cast<size_t>(config.unroll_steps);
     const size_t state_count = transition_count + 1u;
@@ -206,17 +261,30 @@ KStepSample build_k_step_sample(
 
     for (size_t offset = 0; offset < state_count; ++offset) {
         const size_t state_index = start_step + offset;
-        if (state_index >= history.steps.size()) break;
-        const TrajectoryStep& state = history.steps[state_index];
+        if (state_index >= available_states) break;
+
         sample.state_valid[offset] = 1u;
-        std::copy(
-            state.policy_target.begin(),
-            state.policy_target.end(),
-            sample.policy_targets.begin() + offset * kActionSpaceSize);
-        std::copy(
-            state.legal_mask.begin(),
-            state.legal_mask.end(),
-            sample.legal_masks.begin() + offset * kActionSpaceSize);
+        if (state_index < history.steps.size()) {
+            const TrajectoryStep& state = history.steps[state_index];
+            std::copy(
+                state.policy_target.begin(),
+                state.policy_target.end(),
+                sample.policy_targets.begin() + offset * kActionSpaceSize);
+            std::copy(
+                state.legal_mask.begin(),
+                state.legal_mask.end(),
+                sample.legal_masks.begin() + offset * kActionSpaceSize);
+        } else {
+            const BootstrapState& state = *history.bootstrap_state;
+            std::copy(
+                state.policy_target.begin(),
+                state.policy_target.end(),
+                sample.policy_targets.begin() + offset * kActionSpaceSize);
+            std::copy(
+                state.legal_mask.begin(),
+                state.legal_mask.end(),
+                sample.legal_masks.begin() + offset * kActionSpaceSize);
+        }
 
         const auto value = n_step_value_target(history, state_index, config);
         sample.value_targets[offset] = value.first;
@@ -288,6 +356,9 @@ UniformPositionIndex::UniformPositionIndex(const TrainingReplayDataset& dataset)
     : dataset_(&dataset) {
     cumulative_positions_by_game_.reserve(dataset.game_count());
     for (size_t game = 0; game < dataset.game_count(); ++game) {
+        // D2.1 keeps the reference sampler position set on transition roots.
+        // D2.2 will use shard metadata to include the persisted cutoff root
+        // without deserializing every game during index construction.
         const size_t count = dataset.replay().step_count(game);
         checked_add_size(total_positions_, count, "Replay position index");
         cumulative_positions_by_game_.push_back(total_positions_);
