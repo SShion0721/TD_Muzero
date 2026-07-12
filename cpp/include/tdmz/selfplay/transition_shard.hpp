@@ -10,7 +10,7 @@
 
 namespace tdmz {
 
-inline constexpr uint32_t kTransitionShardFormatVersion = 2;
+inline constexpr uint32_t kTransitionShardFormatVersion = 3;
 
 struct ReplayStepDestination {
     float* observation = nullptr;
@@ -32,11 +32,25 @@ struct ReplayStepDestination {
     float* time = nullptr;
 };
 
+struct ReplayGameMetadata {
+    uint64_t seed = 0;
+    int max_steps = 0;
+    bool terminal = false;
+    bool truncated = false;
+    WaveMode wave_mode = WaveMode::Unknown;
+    float total_reward = 0.0f;
+    size_t step_count = 0;
+    bool has_bootstrap_state = false;
+};
+
 struct ReplayIoStats {
     uint64_t physical_read_operations = 0;
     uint64_t physical_bytes_read = 0;
 };
 
+// Kept for source compatibility with the original v2 detector. It returns true
+// for indexed transition shards (legacy v2 or current v3); the reader then emits
+// an explicit version error for unsupported v2 data.
 bool is_transition_shard_v2(const std::string& path);
 
 class TransitionShardReader {
@@ -58,8 +72,10 @@ public:
     int legal_mask_size() const;
     const std::string& path() const;
 
+    ReplayGameMetadata game_metadata(size_t game_index) const;
     GameHistory read_at(size_t game_index);
     TrajectoryStep read_step(size_t game_index, size_t step_index);
+    BootstrapState read_bootstrap_state(size_t game_index);
     void read_step_into(
         size_t game_index,
         size_t step_index,
