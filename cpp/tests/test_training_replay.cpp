@@ -44,6 +44,7 @@ GameHistory make_history(
     GameHistory history;
     history.seed = seed;
     history.max_steps = 1;
+    history.truncated = true;
     history.wave_mode = mode;
 
     TrajectoryStep step;
@@ -58,7 +59,14 @@ GameHistory make_history(
     if (legal_size > static_cast<size_t>(kFlatWaitOffset)) {
         step.legal_mask[static_cast<size_t>(kFlatWaitOffset)] = 1u;
     }
-    history.steps.push_back(std::move(step));
+    history.steps.push_back(step);
+
+    BootstrapState bootstrap;
+    bootstrap.root_value = 0.25f;
+    bootstrap.observation = step.observation;
+    bootstrap.policy_target = step.policy_target;
+    bootstrap.legal_mask = step.legal_mask;
+    history.bootstrap_state = std::move(bootstrap);
     return history;
 }
 
@@ -104,7 +112,10 @@ void test_direct_current_contract() {
     CHECK(dataset.wave_mode() == WaveMode::Fixed);
     CHECK(dataset.game_count() == 1);
     CHECK(dataset.replay().observation_size() == kObservationSize);
-    CHECK(dataset.read_game(0).wave_mode == WaveMode::Fixed);
+    const GameHistory history = dataset.read_game(0);
+    CHECK(history.wave_mode == WaveMode::Fixed);
+    CHECK(history.truncated);
+    CHECK(history.bootstrap_state.has_value());
 }
 
 void test_direct_requires_known_mode() {
@@ -165,6 +176,20 @@ void test_index_rejects_missing_mode() {
         "wave-mode provenance");
 }
 
+void test_index_mode_must_match_shard() {
+    const std::string shard = "test_training_replay_mode_mismatch.tdmzshd";
+    const std::string index = "test_training_replay_mode_mismatch.index.json";
+    write_histories_transition_shard(
+        {make_history(7, WaveMode::Fixed)},
+        shard);
+    write_index(index, shard, "wave_mode", "\"budgeted\"");
+
+    TrainingReplayDataset dataset = TrainingReplayDataset::from_index_json(index);
+    check_throws_contains(
+        [&] { (void)dataset.read_game(0); },
+        "disagrees");
+}
+
 } // namespace
 
 int main() {
@@ -175,6 +200,7 @@ int main() {
         test_index_parses_boolean_mode();
         test_index_parses_string_mode();
         test_index_rejects_missing_mode();
+        test_index_mode_must_match_shard();
         std::cout << "Training replay tests passed!" << std::endl;
         return 0;
     } catch (const std::exception& error) {
