@@ -9,14 +9,13 @@
 namespace tdmz {
 
 inline constexpr const char* kReplayIndexFormat = "tdmz_selfplay_shard_index";
-inline constexpr uint32_t kReplayIndexVersion = 2;
+inline constexpr uint32_t kReplayIndexVersion = 3;
 inline constexpr uint32_t kReplayBinaryFormatVersion = 2;
 inline constexpr uint32_t kLegacyReplayBinaryFormatVersion = 1;
 
-// Rule v4 includes the v3 continuous movement/cooldown and budgeted-wave timing
-// semantics, and makes completed episodes fully absorbing across action, time,
-// economy, legal-mask, and wave-mode mutation APIs.
-inline constexpr uint32_t kEnvironmentRuleVersion = 4;
+// Rule v5 includes the v4 absorbing terminal semantics and makes wave mode
+// immutable after the first environment mutation or time step.
+inline constexpr uint32_t kEnvironmentRuleVersion = 5;
 
 // Observation v2 adds Markov-critical pending-wave data, absolute enemy state,
 // continuous-position splatting, route direction/distance, and bounded scaling.
