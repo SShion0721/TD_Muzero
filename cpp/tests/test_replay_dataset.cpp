@@ -42,6 +42,7 @@ GameHistory make_tiny_history(uint64_t seed, int max_steps) {
     SelfPlayConfig config;
     config.seed = seed;
     config.max_steps = max_steps;
+    config.save_bootstrap_state = true;
     config.mcts.num_simulations = 8;
     config.mcts.latent_top_k = 8;
     config.mcts.max_nodes = 1024;
@@ -50,6 +51,8 @@ GameHistory make_tiny_history(uint64_t seed, int max_steps) {
     SelfPlayRunner runner(config);
     GameHistory history = runner.run(network);
     CHECK_TRUE(!history.steps.empty());
+    CHECK_TRUE(history.completed());
+    if (history.truncated) CHECK_TRUE(history.bootstrap_state.has_value());
     return history;
 }
 
@@ -57,6 +60,8 @@ GameHistory make_single_step_history(uint64_t seed, size_t tensor_size) {
     GameHistory history;
     history.seed = seed;
     history.max_steps = 1;
+    history.truncated = true;
+    history.wave_mode = WaveMode::Fixed;
 
     TrajectoryStep step;
     step.action = kFlatWaitOffset;
@@ -65,7 +70,14 @@ GameHistory make_single_step_history(uint64_t seed, size_t tensor_size) {
         tensor_size,
         tensor_size == 0 ? 0.0f : 1.0f / static_cast<float>(tensor_size));
     step.legal_mask.assign(tensor_size, 1u);
-    history.steps.push_back(std::move(step));
+    history.steps.push_back(step);
+
+    BootstrapState bootstrap;
+    bootstrap.root_value = 0.0f;
+    bootstrap.observation = step.observation;
+    bootstrap.policy_target = step.policy_target;
+    bootstrap.legal_mask = step.legal_mask;
+    history.bootstrap_state = std::move(bootstrap);
     return history;
 }
 
