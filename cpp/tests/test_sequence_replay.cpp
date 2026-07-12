@@ -60,6 +60,16 @@ TrajectoryStep make_step(int index, float reward, float root_value, bool done) {
     return step;
 }
 
+BootstrapState make_bootstrap_state(int index, float root_value) {
+    const TrajectoryStep state = make_step(index, 0.0f, root_value, false);
+    BootstrapState bootstrap;
+    bootstrap.root_value = root_value;
+    bootstrap.observation = state.observation;
+    bootstrap.policy_target = state.policy_target;
+    bootstrap.legal_mask = state.legal_mask;
+    return bootstrap;
+}
+
 GameHistory make_terminal_history() {
     GameHistory history;
     history.seed = 11;
@@ -91,6 +101,9 @@ GameHistory make_truncated_history(int step_count, uint64_t seed = 22) {
             false));
         history.total_reward += history.steps.back().reward;
     }
+    history.bootstrap_state = make_bootstrap_state(
+        step_count,
+        static_cast<float>(20 + step_count));
     return history;
 }
 
@@ -109,11 +122,8 @@ void test_terminal_n_step_targets() {
     CHECK(sample.actions == std::vector<int>({kFlatWaitOffset, kFlatWaitOffset, kFlatWaitOffset}));
     CHECK(sample.reward_targets == std::vector<float>({2.0f, 3.0f, 4.0f}));
 
-    // s1: r1 + .5*r2 + .25*V(s3) = 2 + 1.5 + 3.25
     check_close(sample.value_targets[0], 6.75f, 1e-6f, "terminal s1 target");
-    // s2: r2 + .5*r3 + .25*V(s4) = 3 + 2 + 3.5
     check_close(sample.value_targets[1], 8.5f, 1e-6f, "terminal s2 target");
-    // s3 includes the terminal transition at step 4, so no bootstrap.
     check_close(sample.value_targets[2], 6.5f, 1e-6f, "terminal s3 target");
     check_close(sample.value_targets[3], 5.0f, 1e-6f, "terminal s4 target");
     CHECK(sample.value_valid == std::vector<uint8_t>({1u, 1u, 1u, 1u}));
@@ -135,26 +145,30 @@ void test_terminal_tail_padding() {
     CHECK(sample.reward_targets[1] == 0.0f);
 }
 
-void test_truncated_tail_is_not_terminal() {
+void test_truncated_cutoff_bootstrap() {
     SequenceTargetConfig config;
     config.unroll_steps = 2;
     config.td_steps = 2;
     config.discount = 0.5f;
 
-    const KStepSample sample = build_k_step_sample(
-        make_truncated_history(4), 1, config);
-    CHECK(!sample.episode_terminal);
-    CHECK(sample.episode_truncated);
+    const GameHistory history = make_truncated_history(4);
+    const KStepSample interior = build_k_step_sample(history, 1, config);
+    CHECK(!interior.episode_terminal);
+    CHECK(interior.episode_truncated);
 
-    // s1: r1 + .5*r2 + .25*V(s3) = 2 + 1.5 + 5.75.
-    check_close(sample.value_targets[0], 9.25f, 1e-6f, "truncated interior target");
-    CHECK(sample.value_valid[0] == 1u);
+    check_close(interior.value_targets[0], 9.25f, 1e-6f, "truncated interior target");
+    check_close(interior.value_targets[1], 11.0f, 1e-6f, "truncated near-tail target");
+    check_close(interior.value_targets[2], 16.0f, 1e-6f, "truncated final-root target");
+    CHECK(interior.value_valid == std::vector<uint8_t>({1u, 1u, 1u}));
 
-    // s2 and s3 reach the max-step cutoff without a stored post-cutoff value.
-    CHECK(sample.value_valid[1] == 0u);
-    CHECK(sample.value_valid[2] == 0u);
-    CHECK(sample.value_targets[1] == 0.0f);
-    CHECK(sample.value_targets[2] == 0.0f);
+    const KStepSample tail = build_k_step_sample(history, 3, config);
+    CHECK(tail.state_valid == std::vector<uint8_t>({1u, 1u, 0u}));
+    CHECK(tail.transition_valid == std::vector<uint8_t>({1u, 0u}));
+    CHECK(tail.value_valid == std::vector<uint8_t>({1u, 1u, 0u}));
+    check_close(tail.value_targets[0], 16.0f, 1e-6f, "truncated tail transition target");
+    check_close(tail.value_targets[1], 24.0f, 1e-6f, "cutoff root target");
+    CHECK(tail.legal_masks[kActionSpaceSize + kFlatWaitOffset] == 1u);
+    CHECK(tail.policy_targets[kActionSpaceSize + kFlatWaitOffset] == 1.0f);
 }
 
 void test_invalid_episode_semantics_are_rejected() {
@@ -165,11 +179,16 @@ void test_invalid_episode_semantics_are_rejected() {
     GameHistory incomplete = make_truncated_history(4);
     incomplete.truncated = false;
     incomplete.max_steps = 10;
+    incomplete.bootstrap_state.reset();
     check_invalid([&] { (void)build_k_step_sample(incomplete, 0); });
 
     GameHistory bad_wait = make_truncated_history(4);
     bad_wait.steps[0].legal_mask[kFlatWaitOffset] = 0u;
     check_invalid([&] { (void)build_k_step_sample(bad_wait, 0); });
+
+    GameHistory bad_bootstrap = make_truncated_history(4);
+    bad_bootstrap.bootstrap_state->legal_mask[kFlatWaitOffset] = 0u;
+    check_invalid([&] { (void)build_k_step_sample(bad_bootstrap, 0); });
 }
 
 void test_uniform_position_index_and_sampler() {
@@ -180,9 +199,6 @@ void test_uniform_position_index_and_sampler() {
     const GameHistory long_game = make_truncated_history(5, 101);
     write_histories_transition_shard({short_game, long_game}, path);
 
-    // Windows does not allow deleting a file while TransitionShardReader still owns
-    // an open handle. Keep all replay readers inside a nested scope so their destructors
-    // close the shard before cleanup.
     {
         TrainingReplayDataset dataset({path}, WaveMode::Fixed);
         UniformPositionIndex positions(dataset);
@@ -223,7 +239,7 @@ int main() {
     try {
         test_terminal_n_step_targets();
         test_terminal_tail_padding();
-        test_truncated_tail_is_not_terminal();
+        test_truncated_cutoff_bootstrap();
         test_invalid_episode_semantics_are_rejected();
         test_uniform_position_index_and_sampler();
         std::cout << "Sequence replay tests passed!" << std::endl;
