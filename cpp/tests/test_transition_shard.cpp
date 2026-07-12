@@ -46,13 +46,19 @@ void remove_if_exists(const std::string& path) {
     fs::remove(path, error);
 }
 
-TrajectoryStep make_step(int index, size_t observation_size, size_t policy_size, size_t legal_size) {
+TrajectoryStep make_step(
+    int index,
+    size_t observation_size,
+    size_t policy_size,
+    size_t legal_size,
+    bool done
+) {
     TrajectoryStep step;
     step.step_index = index;
     step.action = index + 3;
     step.reward = 0.25f * static_cast<float>(index + 1);
     step.root_value = -0.1f * static_cast<float>(index + 1);
-    step.done = index == 2;
+    step.done = done;
     step.money = 100 - index;
     step.base_hp = 20 - index;
     step.wave = 1 + index / 2;
@@ -72,15 +78,59 @@ TrajectoryStep make_step(int index, size_t observation_size, size_t policy_size,
     return step;
 }
 
-GameHistory make_history(uint64_t seed, int step_count, size_t obs = 7, size_t policy = 5, size_t legal = 5) {
+BootstrapState make_bootstrap(
+    int index,
+    size_t observation_size,
+    size_t policy_size,
+    size_t legal_size
+) {
+    const TrajectoryStep state = make_step(
+        index, observation_size, policy_size, legal_size, false);
+    BootstrapState bootstrap;
+    bootstrap.root_value = state.root_value;
+    bootstrap.observation = state.observation;
+    bootstrap.policy_target = state.policy_target;
+    bootstrap.legal_mask = state.legal_mask;
+    return bootstrap;
+}
+
+GameHistory make_terminal_history(
+    uint64_t seed,
+    int step_count,
+    size_t obs = 7,
+    size_t policy = 5,
+    size_t legal = 5
+) {
     GameHistory history;
     history.seed = seed;
     history.max_steps = 32;
-    history.terminal = step_count > 0;
+    history.terminal = true;
+    history.wave_mode = WaveMode::Fixed;
     history.total_reward = static_cast<float>(step_count) * 0.75f;
     for (int step = 0; step < step_count; ++step) {
-        history.steps.push_back(make_step(step, obs, policy, legal));
+        history.steps.push_back(make_step(
+            step, obs, policy, legal, step + 1 == step_count));
     }
+    return history;
+}
+
+GameHistory make_truncated_history(
+    uint64_t seed,
+    int step_count,
+    size_t obs = 7,
+    size_t policy = 5,
+    size_t legal = 5
+) {
+    GameHistory history;
+    history.seed = seed;
+    history.max_steps = step_count;
+    history.truncated = true;
+    history.wave_mode = WaveMode::Budgeted;
+    history.total_reward = static_cast<float>(step_count) * 0.5f;
+    for (int step = 0; step < step_count; ++step) {
+        history.steps.push_back(make_step(step, obs, policy, legal, false));
+    }
+    history.bootstrap_state = make_bootstrap(step_count, obs, policy, legal);
     return history;
 }
 
@@ -99,14 +149,27 @@ void assert_step_equal(const TrajectoryStep& expected, const TrajectoryStep& act
     CHECK_TRUE(expected.legal_mask == actual.legal_mask);
 }
 
+void assert_bootstrap_equal(const BootstrapState& expected, const BootstrapState& actual) {
+    check_close(expected.root_value, actual.root_value, "bootstrap root_value");
+    CHECK_TRUE(expected.observation == actual.observation);
+    CHECK_TRUE(expected.policy_target == actual.policy_target);
+    CHECK_TRUE(expected.legal_mask == actual.legal_mask);
+}
+
 void assert_history_equal(const GameHistory& expected, const GameHistory& actual) {
     CHECK_TRUE(expected.seed == actual.seed);
     CHECK_TRUE(expected.max_steps == actual.max_steps);
     CHECK_TRUE(expected.terminal == actual.terminal);
+    CHECK_TRUE(expected.truncated == actual.truncated);
+    CHECK_TRUE(expected.wave_mode == actual.wave_mode);
     check_close(expected.total_reward, actual.total_reward, "total_reward");
     CHECK_TRUE(expected.steps.size() == actual.steps.size());
+    CHECK_TRUE(expected.bootstrap_state.has_value() == actual.bootstrap_state.has_value());
     for (size_t i = 0; i < expected.steps.size(); ++i) {
         assert_step_equal(expected.steps[i], actual.steps[i]);
+    }
+    if (expected.bootstrap_state) {
+        assert_bootstrap_equal(*expected.bootstrap_state, *actual.bootstrap_state);
     }
 }
 
@@ -149,9 +212,9 @@ void test_transition_roundtrip_and_direct_read() {
     const std::string path = "test_transition_roundtrip.tdmzshd";
     remove_if_exists(path);
     const std::vector<GameHistory> histories = {
-        make_history(100, 3),
-        make_history(101, 2),
-        make_history(102, 4),
+        make_terminal_history(100, 3),
+        make_truncated_history(101, 2),
+        make_terminal_history(102, 4),
     };
     write_histories_transition_shard(histories, path);
 
@@ -164,6 +227,16 @@ void test_transition_roundtrip_and_direct_read() {
     CHECK_TRUE(reader.step_count(0) == 3);
     CHECK_TRUE(reader.step_count(2) == 4);
     CHECK_TRUE(reader.step_physical_offset(0, 1) < reader.step_physical_offset(2, 0));
+
+    const ReplayGameMetadata metadata = reader.game_metadata(1);
+    CHECK_TRUE(!metadata.terminal);
+    CHECK_TRUE(metadata.truncated);
+    CHECK_TRUE(metadata.wave_mode == WaveMode::Budgeted);
+    CHECK_TRUE(metadata.has_bootstrap_state);
+    CHECK_TRUE(metadata.step_count == 2u);
+    assert_bootstrap_equal(
+        *histories[1].bootstrap_state,
+        reader.read_bootstrap_state(1));
 
     for (size_t game = 0; game < histories.size(); ++game) {
         assert_history_equal(histories[game], reader.read_at(game));
@@ -226,7 +299,7 @@ void test_transition_atomic_publication() {
     remove_if_exists(path);
     TransitionShardWriter writer(path, 1);
     CHECK_TRUE(!fs::exists(path));
-    writer.write_history(make_history(200, 2));
+    writer.write_history(make_terminal_history(200, 2));
     CHECK_TRUE(!fs::exists(path));
     writer.close();
     CHECK_TRUE(fs::exists(path));
@@ -237,9 +310,9 @@ void test_async_transition_roundtrip_and_close() {
     const std::string path = "test_transition_async.tdmzshd";
     remove_if_exists(path);
     const std::vector<GameHistory> histories = {
-        make_history(300, 2),
-        make_history(301, 3),
-        make_history(302, 1),
+        make_terminal_history(300, 2),
+        make_truncated_history(301, 3),
+        make_terminal_history(302, 1),
     };
 
     AsyncTransitionShardWriter writer(path, histories.size(), 1);
@@ -264,7 +337,7 @@ void test_async_transition_roundtrip_and_close() {
 void test_transition_rejects_future_version() {
     const std::string path = "test_transition_future.tdmzshd";
     remove_if_exists(path);
-    write_histories_transition_shard({make_history(400, 2)}, path);
+    write_histories_transition_shard({make_terminal_history(400, 2)}, path);
     const uint32_t future = 99;
     overwrite_scalar(path, 8, future);
     check_throws([&] { TransitionShardReader reader(path); }, "future transition version");
@@ -273,7 +346,7 @@ void test_transition_rejects_future_version() {
 void test_transition_rejects_bad_step_offset() {
     const std::string path = "test_transition_bad_offset.tdmzshd";
     remove_if_exists(path);
-    write_histories_transition_shard({make_history(410, 2)}, path);
+    write_histories_transition_shard({make_terminal_history(410, 2)}, path);
     const TestTransitionHeader header = read_header(path);
     const uint64_t invalid_offset = 1;
     overwrite_scalar(path, static_cast<std::streamoff>(header.step_table_offset), invalid_offset);
@@ -283,7 +356,7 @@ void test_transition_rejects_bad_step_offset() {
 void test_transition_rejects_truncation() {
     const std::string path = "test_transition_truncated.tdmzshd";
     remove_if_exists(path);
-    write_histories_transition_shard({make_history(420, 2)}, path);
+    write_histories_transition_shard({make_terminal_history(420, 2)}, path);
     const uint64_t size = fs::file_size(path);
     CHECK_TRUE(size > 1);
     fs::resize_file(path, size - 1);
@@ -294,9 +367,9 @@ void test_transition_rejects_shape_mismatch() {
     const std::string path = "test_transition_shape_mismatch.tdmzshd";
     remove_if_exists(path);
     TransitionShardWriter writer(path, 2);
-    writer.write_history(make_history(500, 1, 7, 5, 5));
+    writer.write_history(make_terminal_history(500, 1, 7, 5, 5));
     check_throws(
-        [&] { writer.write_history(make_history(501, 1, 8, 5, 5)); },
+        [&] { writer.write_history(make_terminal_history(501, 1, 8, 5, 5)); },
         "transition shape mismatch");
 }
 
