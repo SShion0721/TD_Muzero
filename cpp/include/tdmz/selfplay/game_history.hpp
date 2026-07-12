@@ -27,9 +27,12 @@ struct GameHistory {
     uint64_t seed = 0;
     int max_steps = 0;
     bool terminal = false;
+    bool truncated = false;
     float total_reward = 0.0f;
     WaveMode wave_mode = WaveMode::Unknown;
     std::vector<TrajectoryStep> steps;
+
+    bool completed() const { return terminal || truncated; }
 };
 
 } // namespace tdmz
