@@ -18,6 +18,7 @@ GameHistory SelfPlayRunner::run(TDEngine& env, INetworkEvaluator& evaluator) con
     GameHistory history;
     history.seed = env.seed();
     history.max_steps = cfg_.max_steps;
+    history.wave_mode = env.wave_mode();
 
     MCTSConfig mcts_cfg = cfg_.mcts;
     mcts_cfg.random_seed = history.seed;
