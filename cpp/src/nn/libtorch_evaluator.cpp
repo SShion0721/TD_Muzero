@@ -87,7 +87,9 @@ EvalOutput LibTorchEvaluator::to_eval_output(const NetworkOutput& out) const {
     return eval;
 }
 
-EvalOutput LibTorchEvaluator::initial_inference(const std::vector<std::vector<float>>& observations) {
+EvalOutput LibTorchEvaluator::initial_inference_impl(
+    const std::vector<std::vector<float>>& observations
+) {
     torch::NoGradGuard guard;
     if (observations.size() != 1) {
         throw std::invalid_argument(
@@ -103,7 +105,7 @@ EvalOutput LibTorchEvaluator::initial_inference(const std::vector<std::vector<fl
     return to_eval_output(out);
 }
 
-EvalOutput LibTorchEvaluator::recurrent_inference(const EvalInput& input) {
+EvalOutput LibTorchEvaluator::recurrent_inference_impl(const EvalInput& input) {
     torch::NoGradGuard guard;
     if (input.batch_size <= 0) throw std::invalid_argument("bad batch size");
     const size_t batch = static_cast<size_t>(input.batch_size);
