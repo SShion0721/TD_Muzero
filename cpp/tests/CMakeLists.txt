@@ -62,6 +62,10 @@ add_executable(test_replay_dataset test_replay_dataset.cpp)
 target_link_libraries(test_replay_dataset tdmz_core)
 add_test(NAME test_replay_dataset COMMAND test_replay_dataset)
 
+add_executable(test_training_replay test_training_replay.cpp)
+target_link_libraries(test_training_replay tdmz_core)
+add_test(NAME test_training_replay COMMAND test_training_replay)
+
 add_executable(test_checkpoint_manifest test_checkpoint_manifest.cpp)
 target_link_libraries(test_checkpoint_manifest tdmz_core)
 add_test(NAME test_checkpoint_manifest COMMAND test_checkpoint_manifest)
