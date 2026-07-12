@@ -173,6 +173,7 @@ std::pair<float, uint8_t> n_step_value_target(
     double target = 0.0;
     double discount_power = 1.0;
     bool terminal_reached = false;
+    size_t transitions_used = 0;
 
     for (int offset = 0; offset < config.td_steps; ++offset) {
         const size_t transition_index = state_index + static_cast<size_t>(offset);
@@ -180,6 +181,7 @@ std::pair<float, uint8_t> n_step_value_target(
 
         const TrajectoryStep& transition = history.steps[transition_index];
         target += discount_power * static_cast<double>(transition.reward);
+        ++transitions_used;
         if (transition.done) {
             terminal_reached = true;
             break;
@@ -191,8 +193,9 @@ std::pair<float, uint8_t> n_step_value_target(
         return {static_cast<float>(target), 1u};
     }
 
-    const size_t bootstrap_index = state_index + static_cast<size_t>(config.td_steps);
-    if (bootstrap_index < step_count) {
+    const size_t bootstrap_index = state_index + transitions_used;
+    if (bootstrap_index < step_count
+        && transitions_used == static_cast<size_t>(config.td_steps)) {
         target += discount_power
             * static_cast<double>(history.steps[bootstrap_index].root_value);
         return {static_cast<float>(target), 1u};
