@@ -36,8 +36,8 @@ struct ReplayBatch {
     std::vector<uint8_t> legal_masks;
     std::vector<uint8_t> dones;
 
-    // Per-batch I/O diagnostics. For transition-indexed v2 shards these count
-    // exact contiguous payload ranges requested from the reader.
+    // Per-batch I/O diagnostics. For indexed transition shards these count
+    // exact payload ranges requested from the reader.
     bool direct_transition_reads = false;
     bool io_stats_exact = false;
     int unique_games_touched = 0;
