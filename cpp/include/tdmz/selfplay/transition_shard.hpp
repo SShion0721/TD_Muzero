@@ -56,7 +56,6 @@ public:
     int observation_size() const;
     int policy_size() const;
     int legal_mask_size() const;
-    WaveMode wave_mode() const;
     const std::string& path() const;
 
     GameHistory read_at(size_t game_index);
