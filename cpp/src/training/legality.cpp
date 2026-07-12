@@ -119,13 +119,25 @@ void LegalityMetricsAccumulator::update_batch(
             "Legality mask payload does not match [B,727]");
     }
 
+    // Accumulate into local counters first so malformed input cannot partially
+    // mutate a long-lived validation accumulator.
+    uint64_t add_samples = 0;
+    uint64_t add_true_legal = 0;
+    uint64_t add_predicted_legal = 0;
+    uint64_t add_true_positive = 0;
+    uint64_t add_false_positive = 0;
+    uint64_t add_true_negative = 0;
+    uint64_t add_false_negative = 0;
+    uint64_t add_wait_legal = 0;
+    uint64_t add_wait_true_positive = 0;
+
     for (int batch = 0; batch < batch_size; ++batch) {
         const size_t offset = static_cast<size_t>(batch) * kActionSpaceSize;
         const uint8_t* mask = flat_exact_legal_masks.data() + offset;
         validate_mask_row(mask, batch);
 
-        ++samples_;
-        ++wait_legal_count_;
+        ++add_samples;
+        ++add_wait_legal;
         for (int action = 0; action < kActionSpaceSize; ++action) {
             const float logit = flat_legality_logits[
                 offset + static_cast<size_t>(action)];
@@ -137,24 +149,34 @@ void LegalityMetricsAccumulator::update_batch(
 
             const bool truth_legal = mask[action] != 0u;
             const bool predicted_legal = logit >= threshold_logit;
-            if (truth_legal) ++true_legal_count_;
-            if (predicted_legal) ++predicted_legal_count_;
+            if (truth_legal) ++add_true_legal;
+            if (predicted_legal) ++add_predicted_legal;
 
             if (truth_legal && predicted_legal) {
-                ++true_positive_;
+                ++add_true_positive;
             } else if (!truth_legal && predicted_legal) {
-                ++false_positive_;
+                ++add_false_positive;
             } else if (!truth_legal && !predicted_legal) {
-                ++true_negative_;
+                ++add_true_negative;
             } else {
-                ++false_negative_;
+                ++add_false_negative;
             }
 
             if (action == kFlatWaitOffset && predicted_legal) {
-                ++wait_true_positive_;
+                ++add_wait_true_positive;
             }
         }
     }
+
+    samples_ += add_samples;
+    true_legal_count_ += add_true_legal;
+    predicted_legal_count_ += add_predicted_legal;
+    true_positive_ += add_true_positive;
+    false_positive_ += add_false_positive;
+    true_negative_ += add_true_negative;
+    false_negative_ += add_false_negative;
+    wait_legal_count_ += add_wait_legal;
+    wait_true_positive_ += add_wait_true_positive;
 }
 
 LegalityMetrics LegalityMetricsAccumulator::metrics() const {
