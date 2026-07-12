@@ -145,11 +145,19 @@ void test_batch_aggregation_and_pruning_gate() {
     CHECK(metrics.wait_recall == 0.5);
     CHECK(!metrics.hard_pruning_ready());
 
+    const auto before_invalid = accumulator.metrics();
     check_invalid([&] {
         accumulator.update(
             std::vector<float>(kActionSpaceSize, std::numeric_limits<float>::quiet_NaN()),
             mask);
     });
+    const auto after_invalid = accumulator.metrics();
+    CHECK(after_invalid.samples == before_invalid.samples);
+    CHECK(after_invalid.true_positive == before_invalid.true_positive);
+    CHECK(after_invalid.false_positive == before_invalid.false_positive);
+    CHECK(after_invalid.true_negative == before_invalid.true_negative);
+    CHECK(after_invalid.false_negative == before_invalid.false_negative);
+    CHECK(after_invalid.wait_true_positive == before_invalid.wait_true_positive);
 }
 
 } // namespace
