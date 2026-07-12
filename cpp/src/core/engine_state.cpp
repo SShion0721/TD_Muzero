@@ -77,6 +77,7 @@ void TDEngine::reset(uint64_t seed) {
     spawn_timer_ = 0.0f;
     time_ = 0.0f;
     game_over_ = false;
+    episode_started_ = false;
 
     ++grid_version_;
     ++tower_version_;
@@ -146,15 +147,28 @@ float TDEngine::pending_spawn_total_hp() const {
 
 void TDEngine::set_use_budgeted_waves(bool enabled, bool regenerate_pending_wave) {
     if (game_over_) return;
-    if (use_budgeted_waves_ == enabled && !regenerate_pending_wave) {
+    if (use_budgeted_waves_ == enabled) {
+        if (regenerate_pending_wave) {
+            if (episode_started_) {
+                throw std::logic_error("Cannot regenerate wave mode after an episode has started");
+            }
+            enemies_to_spawn_ = get_wave_enemies();
+            mark_wave_changed();
+        }
         return;
     }
 
-    use_budgeted_waves_ = enabled;
-    if (regenerate_pending_wave) {
-        enemies_to_spawn_ = get_wave_enemies();
-        mark_wave_changed();
+    if (episode_started_) {
+        throw std::logic_error("Cannot change wave mode after an episode has started");
     }
+    if (!regenerate_pending_wave) {
+        throw std::invalid_argument(
+            "Changing wave mode requires regenerate_pending_wave=true before the episode starts");
+    }
+
+    use_budgeted_waves_ = enabled;
+    enemies_to_spawn_ = get_wave_enemies();
+    mark_wave_changed();
 }
 
 } // namespace tdmz
