@@ -2,6 +2,7 @@
 #include "tdmz/core/observation.hpp"
 #include "tdmz/mcts/mcts.hpp"
 #include "tdmz/nn/libtorch_evaluator.hpp"
+#include <cmath>
 #include <iostream>
 #include <set>
 #include <stdexcept>
@@ -30,6 +31,15 @@ int main() {
         root_batch_rejected = true;
     }
     CHECK_TRUE(root_batch_rejected);
+
+    const EvalOutput initial = evaluator.initial_inference({obs});
+    CHECK_TRUE(initial.values.size() == 1);
+    CHECK_TRUE(initial.rewards.size() == 1);
+    CHECK_TRUE(initial.policy_logits.size() == 1);
+    CHECK_TRUE(initial.legality_logits.size() == 1);
+    CHECK_TRUE(initial.policy_logits[0].size() == kActionSpaceSize);
+    CHECK_TRUE(initial.legality_logits[0].size() == kActionSpaceSize);
+    for (float logit : initial.legality_logits[0]) CHECK_TRUE(std::isfinite(logit));
 
     MCTSConfig mcts_cfg;
     mcts_cfg.num_simulations = 8;
