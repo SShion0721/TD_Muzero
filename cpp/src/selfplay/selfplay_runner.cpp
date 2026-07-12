@@ -83,6 +83,27 @@ GameHistory SelfPlayRunner::run(TDEngine& env, INetworkEvaluator& evaluator) con
     if (history.terminal && history.truncated) {
         throw std::runtime_error("Self-play history cannot be both terminal and truncated");
     }
+
+    if (history.truncated && cfg_.save_bootstrap_state) {
+        BootstrapState bootstrap;
+        make_observation_v2_into(env, bootstrap.observation);
+        bootstrap.legal_mask = env.legal_action_mask();
+        if (std::none_of(
+                bootstrap.legal_mask.begin(),
+                bootstrap.legal_mask.end(),
+                [](uint8_t value) { return value != 0u; })) {
+            throw std::runtime_error("Truncated bootstrap state has no legal actions");
+        }
+
+        const auto search = mcts.search_single_masked(
+            evaluator,
+            bootstrap.observation,
+            bootstrap.legal_mask);
+        bootstrap.root_value = search.root_value;
+        bootstrap.policy_target = search.policy_full;
+        history.bootstrap_state = std::move(bootstrap);
+    }
+
     return history;
 }
 
