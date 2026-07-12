@@ -9,8 +9,10 @@
 namespace tdmz {
 
 inline constexpr const char* kReplayIndexFormat = "tdmz_selfplay_shard_index";
-inline constexpr uint32_t kReplayIndexVersion = 2;
-inline constexpr uint32_t kReplayBinaryFormatVersion = 2;
+// Replay index v3 pairs with transition shard v3 and declares explicit
+// terminal/truncated/wave-mode/bootstrap semantics.
+inline constexpr uint32_t kReplayIndexVersion = 3;
+inline constexpr uint32_t kReplayBinaryFormatVersion = 3;
 inline constexpr uint32_t kLegacyReplayBinaryFormatVersion = 1;
 
 // Rule v5 includes the v4 absorbing terminal semantics and makes wave mode
