@@ -10,6 +10,10 @@ struct SelfPlayConfig {
     bool stop_on_terminal = true;
     bool save_observations = true;
     bool save_legal_mask = true;
+    // When a game reaches max_steps without terminating, run one additional
+    // root search at the cutoff state and persist its observation/value/policy/
+    // legal mask for unbiased truncated n-step bootstrapping.
+    bool save_bootstrap_state = false;
     MCTSConfig mcts;
 };
 
