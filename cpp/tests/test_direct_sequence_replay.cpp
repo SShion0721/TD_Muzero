@@ -124,7 +124,7 @@ void test_direct_sequence_parity_and_deduplication() {
     std::filesystem::remove(shard0);
     std::filesystem::remove(shard1);
 
-    write_histories_transition_shard({make_terminal_history(10, 6)}, shard0);
+    write_histories_transition_shard({make_terminal_history(10, 12)}, shard0);
     write_histories_transition_shard({make_truncated_history(20, 5)}, shard1);
 
     {
@@ -134,11 +134,11 @@ void test_direct_sequence_parity_and_deduplication() {
 
         CHECK(direct_dataset.shard_count() == 2u);
         CHECK(direct_dataset.game_count() == 2u);
-        CHECK(positions.position_count() == 12u);
+        CHECK(positions.position_count() == 18u);
         CHECK(positions.locate(0).global_game_index == 0u);
-        CHECK(positions.locate(5).step_index == 5u);
-        CHECK(positions.locate(6).global_game_index == 1u);
-        CHECK(positions.locate(11).step_index == 5u);
+        CHECK(positions.locate(11).step_index == 11u);
+        CHECK(positions.locate(12).global_game_index == 1u);
+        CHECK(positions.locate(17).step_index == 5u);
 
         const ReplayGameMetadata terminal = direct_dataset.game_metadata(0);
         const ReplayGameMetadata truncated = direct_dataset.game_metadata(1);
@@ -153,13 +153,13 @@ void test_direct_sequence_parity_and_deduplication() {
             ref.step_index = step;
             refs.push_back(ref);
         };
-        add_ref(0, 0);
-        add_ref(0, 1);
-        add_ref(0, 1); // exact duplicate
-        add_ref(0, 5);
+        add_ref(0, 0);  // synthetic local cutoff before the real terminal
+        add_ref(0, 1);  // overlapping synthetic window
+        add_ref(0, 1);  // exact duplicate
+        add_ref(0, 11); // real terminal tail
         add_ref(1, 0);
         add_ref(1, 2);
-        add_ref(1, 5); // persisted cutoff root
+        add_ref(1, 5);  // persisted cutoff root
 
         SequenceTargetConfig config;
         config.unroll_steps = 3;
@@ -179,10 +179,10 @@ void test_direct_sequence_parity_and_deduplication() {
         CHECK(training.replay().game_read_count() == 0u);
         CHECK(stats.unique_games_touched == 2);
         CHECK(stats.unique_shards_touched == 2);
-        CHECK(stats.requested_step_records == 25u);
-        CHECK(stats.unique_step_records_read == 11u);
+        CHECK(stats.requested_step_records == 33u);
+        CHECK(stats.unique_step_records_read == 15u);
         CHECK(stats.bootstrap_records_read == 1u);
-        CHECK(stats.physical_read_operations == 12u);
+        CHECK(stats.physical_read_operations == 16u);
         CHECK(stats.physical_bytes_read > 0u);
         CHECK(stats.unique_step_records_read < stats.requested_step_records);
 
