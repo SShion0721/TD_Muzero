@@ -86,6 +86,20 @@ void TrainingReplayDataset::validate_current_training_contract() const {
 GameHistory TrainingReplayDataset::read_game(size_t game_index) {
     GameHistory history = replay_.read_game(game_index);
     history.wave_mode = wave_mode_;
+
+    // Transition shard v2 predates an explicit truncated bit. For current
+    // self-play data the cutoff is losslessly derivable from max_steps and the
+    // stored step count. Keep the derivation at the training boundary so old
+    // diagnostic readers retain their original binary interpretation.
+    if (!history.terminal
+        && !history.truncated
+        && history.max_steps >= 0
+        && history.steps.size() == static_cast<size_t>(history.max_steps)) {
+        history.truncated = true;
+    }
+    if (history.terminal && history.truncated) {
+        throw std::runtime_error("Training replay episode is both terminal and truncated");
+    }
     return history;
 }
 
