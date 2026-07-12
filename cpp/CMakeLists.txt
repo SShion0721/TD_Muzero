@@ -26,6 +26,7 @@ set(TDMZ_CORE_SOURCES
     src/selfplay/training_replay.cpp
     src/selfplay/trajectory_writer.cpp
     src/selfplay/transition_shard.cpp
+    src/training/direct_sequence_replay.cpp
     src/training/legality.cpp
     src/training/sequence_replay.cpp
     src/balance/attack_budget.cpp
