@@ -52,7 +52,12 @@ static void check_throws_invalid(Fn&& fn, const char* label) {
 }
 
 static EvalOutput make_eval_output(float value = 0.0f, float reward = 0.0f) {
-    return {{value}, {reward}, {std::vector<float>(kActionSpaceSize, 0.0f)}};
+    EvalOutput output;
+    output.values = {value};
+    output.rewards = {reward};
+    output.policy_logits = {std::vector<float>(kActionSpaceSize, 0.0f)};
+    output.legality_logits = {std::vector<float>(kActionSpaceSize, 0.0f)};
+    return output;
 }
 
 static RootSearchOutput run_search(MCTSConfig cfg) {
@@ -73,41 +78,71 @@ static RootSearchOutput run_search(int sims, int topk) {
 }
 
 class InvalidPolicyNetwork : public INetworkEvaluator {
-public:
-    EvalOutput initial_inference(const std::vector<std::vector<float>>&) override {
-        return {{0.0f}, {0.0f}, {{0.0f}}};
+protected:
+    EvalOutput initial_inference_impl(const std::vector<std::vector<float>>&) override {
+        EvalOutput output = make_eval_output();
+        output.policy_logits[0].resize(1);
+        return output;
     }
 
-    EvalOutput recurrent_inference(const EvalInput&) override {
-        return {{0.0f}, {0.0f}, {{0.0f}}};
+    EvalOutput recurrent_inference_impl(const EvalInput&) override {
+        return initial_inference_impl({});
+    }
+};
+
+class InvalidLegalityNetwork : public INetworkEvaluator {
+protected:
+    EvalOutput initial_inference_impl(const std::vector<std::vector<float>>&) override {
+        EvalOutput output = make_eval_output();
+        output.legality_logits[0].resize(1);
+        return output;
+    }
+
+    EvalOutput recurrent_inference_impl(const EvalInput&) override {
+        return initial_inference_impl({});
+    }
+};
+
+class MissingLegalityBatchNetwork : public INetworkEvaluator {
+protected:
+    EvalOutput initial_inference_impl(const std::vector<std::vector<float>>&) override {
+        EvalOutput output = make_eval_output();
+        output.legality_logits.clear();
+        return output;
+    }
+
+    EvalOutput recurrent_inference_impl(const EvalInput&) override {
+        return initial_inference_impl({});
     }
 };
 
 class CountingNetwork : public INetworkEvaluator {
 public:
-    EvalOutput initial_inference(const std::vector<std::vector<float>>&) override {
+    int initial_calls = 0;
+    int recurrent_calls = 0;
+
+protected:
+    EvalOutput initial_inference_impl(const std::vector<std::vector<float>>&) override {
         ++initial_calls;
         return make_eval_output();
     }
 
-    EvalOutput recurrent_inference(const EvalInput&) override {
+    EvalOutput recurrent_inference_impl(const EvalInput&) override {
         ++recurrent_calls;
         return make_eval_output();
     }
-
-    int initial_calls = 0;
-    int recurrent_calls = 0;
 };
 
 class FixedReturnNetwork : public INetworkEvaluator {
 public:
     FixedReturnNetwork(float value, float reward) : value_(value), reward_(reward) {}
 
-    EvalOutput initial_inference(const std::vector<std::vector<float>>&) override {
+protected:
+    EvalOutput initial_inference_impl(const std::vector<std::vector<float>>&) override {
         return make_eval_output();
     }
 
-    EvalOutput recurrent_inference(const EvalInput&) override {
+    EvalOutput recurrent_inference_impl(const EvalInput&) override {
         return make_eval_output(value_, reward_);
     }
 
@@ -117,18 +152,19 @@ private:
 };
 
 enum class EvalStage { Initial, Recurrent };
-enum class EvalField { Value, Reward, Policy };
+enum class EvalField { Value, Reward, Policy, Legality };
 
 class NonFiniteNetwork : public INetworkEvaluator {
 public:
     NonFiniteNetwork(EvalStage stage, EvalField field, float bad_value)
         : stage_(stage), field_(field), bad_value_(bad_value) {}
 
-    EvalOutput initial_inference(const std::vector<std::vector<float>>&) override {
+protected:
+    EvalOutput initial_inference_impl(const std::vector<std::vector<float>>&) override {
         return make(stage_ == EvalStage::Initial);
     }
 
-    EvalOutput recurrent_inference(const EvalInput&) override {
+    EvalOutput recurrent_inference_impl(const EvalInput&) override {
         return make(stage_ == EvalStage::Recurrent);
     }
 
@@ -145,6 +181,9 @@ private:
                 break;
             case EvalField::Policy:
                 output.policy_logits[0][17] = bad_value_;
+                break;
+            case EvalField::Legality:
+                output.legality_logits[0][17] = bad_value_;
                 break;
         }
         return output;
@@ -252,12 +291,27 @@ void test_multiplayer_mode_is_rejected() {
 
 void test_invalid_network_output_is_rejected() {
     TDEngine env(11, 11, 0);
-    InvalidPolicyNetwork net;
+    const auto observation = make_observation_v1(env);
+    const auto legal = env.legal_actions();
     MCTSConfig cfg;
-    MCTS mcts(cfg);
+
+    InvalidPolicyNetwork invalid_policy;
+    MCTS policy_mcts(cfg);
     check_throws_runtime(
-        [&] { (void)mcts.search_single(net, make_observation_v1(env), env.legal_actions()); },
+        [&] { (void)policy_mcts.search_single(invalid_policy, observation, legal); },
         "invalid policy width");
+
+    InvalidLegalityNetwork invalid_legality;
+    MCTS legality_mcts(cfg);
+    check_throws_runtime(
+        [&] { (void)legality_mcts.search_single(invalid_legality, observation, legal); },
+        "invalid legality width");
+
+    MissingLegalityBatchNetwork missing_legality;
+    MCTS batch_mcts(cfg);
+    check_throws_runtime(
+        [&] { (void)batch_mcts.search_single(missing_legality, observation, legal); },
+        "missing legality batch");
 }
 
 void test_non_finite_initial_and_recurrent_outputs_are_rejected() {
@@ -266,7 +320,12 @@ void test_non_finite_initial_and_recurrent_outputs_are_rejected() {
         std::numeric_limits<float>::infinity(),
     };
     const EvalStage stages[] = {EvalStage::Initial, EvalStage::Recurrent};
-    const EvalField fields[] = {EvalField::Value, EvalField::Reward, EvalField::Policy};
+    const EvalField fields[] = {
+        EvalField::Value,
+        EvalField::Reward,
+        EvalField::Policy,
+        EvalField::Legality,
+    };
 
     MCTSConfig cfg;
     cfg.num_simulations = 1;
