@@ -55,7 +55,7 @@ Validated gates:
 
 ### Terminal absorption
 
-Status: implemented; local validation required.
+Status: completed and validated.
 
 Completed behavior:
 
@@ -63,32 +63,47 @@ Completed behavior:
 - terminal `step_wait()` and `step_time()` do not advance time or repeat rewards;
 - build, upgrade, sell, and wave-mode mutation are disabled after terminal;
 - terminal legal actions are exactly Wait1, preserving the non-empty mask contract;
-- environment rule version incremented to 4;
-- regression test snapshots all public engine state and verifies repeated terminal calls
+- environment rule version incremented to 4 for this transition change;
+- regression tests snapshot all public engine state and verify repeated terminal calls
   are exact no-ops;
 - the former monolithic engine implementation was split into state, board, action, and
-  tick translation units without changing the public API.
+  tick translation units without changing the public API;
+- complete normal and LibTorch suites passed after the change.
+
+### Wave-mode and training replay provenance fence
+
+Status: implemented; local validation required.
+
+Completed behavior:
+
+1. `WaveMode` is an explicit `Unknown/Fixed/Budgeted` type.
+2. A self-play `GameHistory` records the actual environment mode, like its actual seed.
+3. Wave mode can be changed only before the first mutation/time step and only while
+   regenerating the pending wave; it is immutable once the episode begins.
+4. Reset starts a new episode and reopens pre-start mode selection.
+5. Environment rule version is 5.
+6. `TrainingReplayDataset` is the training-facing fence:
+   - requires explicit fixed/budgeted provenance for direct shard sets;
+   - reads the existing `budgeted` index field or a future `wave_mode` string;
+   - rejects missing provenance;
+   - requires transition-indexed v2 replay;
+   - requires exact current dimensions: 40x11x11 observation and 727 policy/legal masks;
+   - rejects old 20-channel direct transition shards.
+7. Generic `ReplayDataset` and low-level shard readers remain available for diagnostics
+   and migration, but future trainers must use `TrainingReplayDataset`.
 
 Validation gate:
 
-- focused timing/checkpoint tests pass;
-- complete normal and LibTorch CTest suites pass;
-- Golden Trace remains unchanged for traces that do not act after terminal.
-
-### Remaining provenance fence
-
-Status: next.
-
-1. Add explicit fixed/budgeted wave-mode provenance to generated replay indexes.
-2. Reject mixed wave modes in one training dataset.
-3. Prevent runtime wave-mode changes once an episode has begun.
-4. Make direct transition-shard dataset construction enforce current observation,
-   policy, and legal-mask dimensions even without an index manifest.
-5. Add rejection tests for old 20-channel direct shards and mixed wave modes.
+- `test_engine_wave_modes` passes all pre-start and post-start mutation cases;
+- `test_training_replay` passes direct/index provenance and old-shape rejection cases;
+- `test_selfplay` confirms fixed and budgeted histories use the actual environment mode;
+- checkpoint compatibility expects environment rule version 5;
+- complete normal and LibTorch suites pass;
+- Golden Trace remains unchanged because fixed-mode transition outcomes are unchanged.
 
 ## Phase C — legality-aware evaluator path
 
-Status: not started.
+Status: next after the provenance validation gate.
 
 1. Extend EvalOutput with legality logits.
 2. Copy legality logits through LibTorchEvaluator.
@@ -165,12 +180,11 @@ Gate:
 
 ## Remaining audit blockers before training
 
-1. direct transition-shard construction must enforce current tensor dimensions even
-   without an index manifest;
-2. fixed-wave and budgeted-wave datasets need explicit provenance and must not be mixed;
-3. replay targets remain single-step and `root_value(t)` is not a valid final value label;
-4. terminal and truncated episodes are still conflated;
-5. latent-node legality is unavailable until Phase C.
+1. replay targets remain single-step and `root_value(t)` is not a valid final value label;
+2. terminal and truncated episodes are still conflated;
+3. latent-node legality is unavailable until Phase C;
+4. the low-level transition shard binary itself does not yet embed wave mode; the
+   training fence therefore treats the index/direct constructor as authoritative.
 
 Already fixed:
 
@@ -178,9 +192,10 @@ Already fixed:
 - unsupported multi-second wait actions are rejected by the 727-action encoder;
 - enemy movement rejects negative and non-finite time inputs;
 - DefenseCapacity shot counting follows the engine's half-open cooldown interval;
-- externally supplied self-play environments record their actual seed;
+- externally supplied self-play environments record their actual seed and wave mode;
 - action and pathfinding headers declare their dependencies explicitly;
-- terminal states are fully absorbing across public mutation and stepping APIs.
+- terminal states are fully absorbing across public mutation and stepping APIs;
+- training-facing replay requires explicit wave mode and exact current tensor sizes.
 
 ## Validation discipline
 
