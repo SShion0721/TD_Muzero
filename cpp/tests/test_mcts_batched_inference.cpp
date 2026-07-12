@@ -37,14 +37,21 @@ void check_invalid_argument(Fn&& function) {
 
 class RecordingBatchNetwork final : public INetworkEvaluator {
 public:
-    EvalOutput initial_inference(
+    int initial_calls = 0;
+    int recurrent_calls = 0;
+    int recurrent_samples = 0;
+    int max_batch = 0;
+    std::vector<int> batch_sizes;
+
+protected:
+    EvalOutput initial_inference_impl(
         const std::vector<std::vector<float>>& observations
     ) override {
         ++initial_calls;
         return make_output(static_cast<int>(observations.size()), nullptr);
     }
 
-    EvalOutput recurrent_inference(const EvalInput& input) override {
+    EvalOutput recurrent_inference_impl(const EvalInput& input) override {
         ++recurrent_calls;
         recurrent_samples += input.batch_size;
         max_batch = std::max(max_batch, input.batch_size);
@@ -61,12 +68,6 @@ public:
         return make_output(input.batch_size, &input);
     }
 
-    int initial_calls = 0;
-    int recurrent_calls = 0;
-    int recurrent_samples = 0;
-    int max_batch = 0;
-    std::vector<int> batch_sizes;
-
 private:
     EvalOutput make_output(int batch_size, const EvalInput* input) {
         EvalOutput output;
@@ -75,6 +76,9 @@ private:
         output.policy_logits.resize(
             static_cast<size_t>(batch_size),
             std::vector<float>(kActionSpaceSize, -4.0f));
+        output.legality_logits.resize(
+            static_cast<size_t>(batch_size),
+            std::vector<float>(kActionSpaceSize, 0.0f));
 
         for (int batch = 0; batch < batch_size; ++batch) {
             const int target = input ? input->target_node_ids[static_cast<size_t>(batch)] : 0;
@@ -85,9 +89,12 @@ private:
                 = static_cast<float>((action + 3) % 7) * 0.002f;
 
             auto& logits = output.policy_logits[static_cast<size_t>(batch)];
+            auto& legality = output.legality_logits[static_cast<size_t>(batch)];
             for (int candidate = 0; candidate < kActionSpaceSize; ++candidate) {
                 logits[static_cast<size_t>(candidate)]
                     = static_cast<float>((candidate * 13 + target * 5 + action) % 101) * 0.01f;
+                legality[static_cast<size_t>(candidate)]
+                    = static_cast<float>((candidate * 7 + target + action) % 29) * 0.01f;
             }
         }
         return output;
