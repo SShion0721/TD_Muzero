@@ -1,7 +1,6 @@
 #pragma once
 
 #include "tdmz/core/compatibility.hpp"
-#include "tdmz/core/wave_mode.hpp"
 #include "tdmz/selfplay/game_history.hpp"
 #include "tdmz/selfplay/transition_shard.hpp"
 
@@ -21,6 +20,14 @@ struct ReplayBatch {
     int policy_size = 0;
     int legal_mask_size = 0;
 
+    // Flat contiguous training buffers.
+    // observations:    [B, observation_size]
+    // policy_targets:  [B, policy_size]
+    // values:          [B]
+    // rewards:         [B]
+    // actions:         [B]
+    // legal_masks:     [B, legal_mask_size]
+    // dones:           [B]
     std::vector<float> observations;
     std::vector<float> policy_targets;
     std::vector<float> values;
@@ -29,6 +36,8 @@ struct ReplayBatch {
     std::vector<uint8_t> legal_masks;
     std::vector<uint8_t> dones;
 
+    // Per-batch I/O diagnostics. For transition-indexed v2 shards these count
+    // exact contiguous payload ranges requested from the reader.
     bool direct_transition_reads = false;
     bool io_stats_exact = false;
     int unique_games_touched = 0;
@@ -55,7 +64,6 @@ struct ReplayIndexMetadata {
     uint32_t index_version = 0;
     bool legacy_v1 = false;
     CompatibilityMetadata compatibility = current_compatibility_metadata();
-    WaveMode wave_mode = WaveMode::Unknown;
 };
 
 struct ReplayIndexInfo {
@@ -71,9 +79,7 @@ ReplayIndexInfo load_replay_index_json(
 
 class ReplayDataset {
 public:
-    // Direct shard construction has no index from which to infer provenance,
-    // so callers must state the single wave mode for the complete shard set.
-    ReplayDataset(std::vector<std::string> shard_paths, WaveMode wave_mode);
+    explicit ReplayDataset(std::vector<std::string> shard_paths);
     ~ReplayDataset();
 
     ReplayDataset(const ReplayDataset&) = delete;
@@ -96,7 +102,6 @@ public:
     int observation_size() const { return observation_size_; }
     int policy_size() const { return policy_size_; }
     int legal_mask_size() const { return legal_mask_size_; }
-    WaveMode wave_mode() const { return wave_mode_; }
 
     ReplaySampleRef locate_game(size_t global_game_index) const;
     GameHistory read_game(size_t global_game_index);
@@ -134,7 +139,6 @@ private:
     int observation_size_ = 0;
     int policy_size_ = 0;
     int legal_mask_size_ = 0;
-    WaveMode wave_mode_ = WaveMode::Unknown;
     uint64_t game_read_count_ = 0;
 };
 
