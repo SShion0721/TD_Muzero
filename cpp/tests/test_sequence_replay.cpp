@@ -146,8 +146,8 @@ void test_truncated_tail_is_not_terminal() {
     CHECK(!sample.episode_terminal);
     CHECK(sample.episode_truncated);
 
-    // s1 has a stored bootstrap state s3.
-    check_close(sample.value_targets[0], 8.75f, 1e-6f, "truncated interior target");
+    // s1: r1 + .5*r2 + .25*V(s3) = 2 + 1.5 + 5.75.
+    check_close(sample.value_targets[0], 9.25f, 1e-6f, "truncated interior target");
     CHECK(sample.value_valid[0] == 1u);
 
     // s2 and s3 reach the max-step cutoff without a stored post-cutoff value.
