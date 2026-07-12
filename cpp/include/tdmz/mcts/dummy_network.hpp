@@ -5,15 +5,15 @@
 namespace tdmz {
 
 class DummyNetwork : public INetworkEvaluator {
-public:
-    EvalOutput initial_inference(
+protected:
+    EvalOutput initial_inference_impl(
         const std::vector<std::vector<float>>& observations
     ) override {
         int b = static_cast<int>(observations.size());
         return make_output(b);
     }
 
-    EvalOutput recurrent_inference(
+    EvalOutput recurrent_inference_impl(
         const EvalInput& input
     ) override {
         return make_output(input.batch_size);
