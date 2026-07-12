@@ -86,65 +86,92 @@ Invariant throughout Phase C:
 
 ### D1 — reference sequence semantics
 
-Status: implemented; local validation required.
+Status: completed and validated.
 
-Implemented:
+Completed:
 
 1. `GameHistory` distinguishes `terminal` and `truncated` endings.
 2. `SelfPlayRunner` marks max-step cutoffs as truncated instead of terminal.
-3. Transition shard v2 truncation is losslessly derived at the training boundary from
-   `!terminal && step_count == max_steps`; no old diagnostic reader is reinterpreted.
-4. `SequenceTargetConfig` defaults to:
+3. `SequenceTargetConfig` defaults to:
    - unroll K = 5;
    - TD horizon n = 10;
    - discount = 0.997.
-5. `KStepSample` contains:
+4. `KStepSample` contains:
    - one initial observation;
    - K actions and reward targets;
    - K+1 policy, value, and exact legality targets;
    - transition/state/value valid masks;
    - terminal/truncated provenance.
-6. Value targets use real discounted rewards plus `root_value(t+n)` only as a future
-   bootstrap. `root_value(t)` is never copied as its own target.
-7. Terminal horizons stop without bootstrap.
-8. Truncated tails without a persisted post-cutoff value are marked value-invalid rather
-   than treated as terminal.
-9. `UniformPositionIndex` gives every stored root state equal probability, independent of
-   game length.
-10. `KStepReplaySampler` packs contiguous training buffers and deduplicates whole-game
-    reads within a sampled batch.
-11. Validation rejects incomplete episodes, terminal/truncated conflicts, non-contiguous
-    steps, bad actions, malformed policies, and corrupt exact masks.
+5. Value targets use real discounted rewards plus a future root value only as bootstrap.
+   `root_value(t)` is never copied as its own target.
+6. Terminal horizons stop without bootstrap.
+7. Position-uniform sampling removes the old short-game over-weighting.
+8. `KStepReplaySampler` packs contiguous buffers and deduplicates whole-game reads within
+   a sampled batch.
+9. Validation rejects incomplete episodes, terminal/truncated conflicts, malformed policy,
+   invalid action/mask pairs, and non-finite state data.
+10. Focused, complete normal, and complete LibTorch suites passed after D1.
 
-D1 validation gate:
+### D2.1 — transition shard v3 and explicit cutoff bootstrap
 
-- hand-computed terminal n-step targets pass;
-- hand-computed truncated targets pass;
-- terminal and truncated tail padding masks pass;
-- short and long games map to one position-uniform index;
-- K-step packed dimensions and checksums pass;
-- `test_selfplay`, `test_training_replay`, and all prior suites remain green.
+Status: implemented; local validation required.
 
-### D2 — direct sequence I/O and persisted cutoff bootstrap
+Implemented:
 
-Status: next after D1 validation.
+1. Replay binary format and replay index version are now 3.
+2. Every v3 game entry persists:
+   - terminal;
+   - truncated;
+   - fixed/budgeted wave mode;
+   - step count and max steps;
+   - optional cutoff-bootstrap presence and payload location.
+3. A truncated self-play game can run one additional root search after its last transition
+   and persist the real cutoff root:
+   - observation;
+   - root value;
+   - policy target;
+   - exact legal mask.
+4. Truncated tail targets now accumulate every available reward and bootstrap at the actual
+   cutoff state, even when fewer than `n` transitions remain.
+5. The cutoff root can appear as the final valid K+1 prediction state.
+6. Terminal games are forbidden from carrying a cutoff bootstrap.
+7. Shard and index/direct wave-mode provenance must agree.
+8. Legacy transition shard v2 data is explicitly rejected for current training rather than
+   having terminal/truncated/bootstrap semantics inferred.
+9. The current dummy self-play shard generator emits v3 data and counts the extra cutoff
+   search in its simulation totals.
 
-Required:
+D2.1 validation gate:
 
-1. Add direct contiguous range reads for the maximum of `K+1` and `n+1` states.
-2. Avoid whole-game deserialization in the training sampler.
-3. Persist explicit terminal/truncated metadata in the next transition-shard format.
-4. Persist a post-cutoff observation/value for truncated games, or define an equivalent
-   bootstrap record, so truncated tail value targets need not be discarded.
-5. Add I/O counters and compare direct sequence reads against the D1 reference sampler.
-6. Prove one-step and direct K-step readers agree on all shared fields.
+- v3 terminal/truncated/wave-mode metadata round-trips;
+- cutoff bootstrap tensors and value round-trip;
+- direct step and direct bootstrap reads match source histories;
+- hand-computed near-cutoff n-step targets pass;
+- current training replay rejects mode disagreement and missing cutoff bootstrap;
+- full normal and LibTorch suites pass;
+- tiny v3 generator smoke produces a readable index and shards.
+
+### D2.2 — direct sequence I/O
+
+Status: blocked on D2.1 validation.
+
+Next implementation:
+
+1. Expose game metadata and bootstrap records through the generic replay layer.
+2. Add direct range reads for the maximum of `K+1` prediction states and `n` reward steps.
+3. Avoid whole-game deserialization in the training sampler.
+4. Include persisted cutoff roots in the global position-uniform index.
+5. Sort and deduplicate overlapping physical ranges inside a batch.
+6. Compare direct sequence samples against the D1 whole-game reference path field by field.
+7. Add sequence I/O counters and throughput benchmarks.
 
 Phase D completion gate:
 
 - hand-computed target tests pass;
-- direct and reference sequence samplers are bit-identical for the same sample refs;
+- direct and reference sequence samplers are identical for the same sample refs;
 - trainer consumes contiguous K-step batches without whole-game deserialization;
-- no truncated state is silently treated as terminal.
+- no truncated state is silently treated as terminal;
+- direct sequence I/O is measurably below whole-game I/O on long trajectories.
 
 ## Phase E — trainer and real-network self-play
 
@@ -173,8 +200,8 @@ Only after the complete training loop is correct:
 
 ## Remaining blockers before meaningful training
 
-1. D1 still reads whole games; D2 must add direct sequence I/O.
-2. Transition shard v2 does not explicitly store truncated or post-cutoff bootstrap state.
+1. D2.1 requires local validation.
+2. D2.2 must replace whole-game reads with direct sequence I/O.
 3. C2 legality loss is not connected to a trainer.
 4. No complete LibTorch optimizer/checkpoint training loop exists yet.
 
