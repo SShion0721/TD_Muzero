@@ -53,6 +53,8 @@ struct WorkerResult {
     int steps = 0;
     int simulations = 0;
     int terminal_games = 0;
+    int truncated_games = 0;
+    int bootstrap_states = 0;
     uint64_t seed_start = 0;
     uint64_t bytes_written = 0;
     double seconds = 0.0;
@@ -101,6 +103,13 @@ double checksum_history(const GameHistory& history) {
         }
         for (size_t i = 0; i < step.observation.size(); i += 97) {
             sum += step.observation[i] * static_cast<double>((i % 29) + 1);
+        }
+    }
+    if (history.bootstrap_state) {
+        sum += history.bootstrap_state->root_value * 7.0;
+        for (size_t i = 0; i < history.bootstrap_state->observation.size(); i += 97) {
+            sum += history.bootstrap_state->observation[i]
+                * static_cast<double>((i % 31) + 1);
         }
     }
     return sum;
@@ -219,6 +228,7 @@ void generate_worker_games(
     selfplay.mcts.recurrent_batch_size = config.recurrent_batch_size;
     selfplay.save_observations = true;
     selfplay.save_legal_mask = true;
+    selfplay.save_bootstrap_state = true;
 
     for (int game = 0; game < plan.games; ++game) {
         selfplay.seed = plan.seed_start + static_cast<uint64_t>(game);
@@ -227,9 +237,12 @@ void generate_worker_games(
         GameHistory history = runner.run(environment, network);
 
         const int steps = static_cast<int>(history.steps.size());
+        const int bootstrap_searches = history.bootstrap_state ? 1 : 0;
         result.steps += steps;
-        result.simulations += steps * config.simulations;
+        result.simulations += (steps + bootstrap_searches) * config.simulations;
         if (history.terminal) ++result.terminal_games;
+        if (history.truncated) ++result.truncated_games;
+        result.bootstrap_states += bootstrap_searches;
         result.total_reward += history.total_reward;
         result.checksum += checksum_history(history);
         writer.write_history(std::move(history));
@@ -272,6 +285,8 @@ void write_index_json(
     int total_steps = 0;
     int total_simulations = 0;
     int terminal_games = 0;
+    int truncated_games = 0;
+    int bootstrap_states = 0;
     uint64_t bytes_written = 0;
     double total_reward = 0.0;
     double checksum = 0.0;
@@ -280,6 +295,8 @@ void write_index_json(
         total_steps += result.steps;
         total_simulations += result.simulations;
         terminal_games += result.terminal_games;
+        truncated_games += result.truncated_games;
+        bootstrap_states += result.bootstrap_states;
         bytes_written += result.bytes_written;
         total_reward += result.total_reward;
         checksum += result.checksum;
@@ -305,8 +322,9 @@ void write_index_json(
     out << "  \"action_space_size\": " << compatibility.action_space_size << ",\n";
     out << "  \"policy_size\": " << compatibility.policy_size << ",\n";
     out << "  \"legal_mask_size\": " << compatibility.legal_mask_size << ",\n";
-    out << "  \"sampling_distribution\": \"uniform_game_then_uniform_step\",\n";
+    out << "  \"sampling_distribution\": \"uniform_position\",\n";
     out << "  \"prefix\": \"" << json_escape(config.prefix) << "\",\n";
+    out << "  \"wave_mode\": \"" << (config.budgeted ? "budgeted" : "fixed") << "\",\n";
     out << "  \"budgeted\": " << (config.budgeted ? "true" : "false") << ",\n";
     out << "  \"async_write\": " << (config.async_write ? "true" : "false") << ",\n";
     out << "  \"writer_queue_size\": " << config.writer_queue_size << ",\n";
@@ -321,6 +339,8 @@ void write_index_json(
     out << "  \"total_steps\": " << total_steps << ",\n";
     out << "  \"total_simulations\": " << total_simulations << ",\n";
     out << "  \"terminal_games\": " << terminal_games << ",\n";
+    out << "  \"truncated_games\": " << truncated_games << ",\n";
+    out << "  \"bootstrap_states\": " << bootstrap_states << ",\n";
     out << "  \"total_reward\": " << total_reward << ",\n";
     out << "  \"total_seconds\": " << total_seconds << ",\n";
     out << "  \"bytes_written\": " << bytes_written << ",\n";
@@ -335,6 +355,8 @@ void write_index_json(
             << ", \"steps\": " << result.steps
             << ", \"simulations\": " << result.simulations
             << ", \"terminal_games\": " << result.terminal_games
+            << ", \"truncated_games\": " << result.truncated_games
+            << ", \"bootstrap_states\": " << result.bootstrap_states
             << ", \"total_reward\": " << result.total_reward
             << ", \"seconds\": " << result.seconds
             << ", \"bytes\": " << result.bytes_written
@@ -354,12 +376,14 @@ void print_summary(
     int games = 0;
     int steps = 0;
     int simulations = 0;
+    int bootstrap_states = 0;
     uint64_t bytes = 0;
     double checksum = 0.0;
     for (const auto& result : results) {
         games += result.games;
         steps += result.steps;
         simulations += result.simulations;
+        bootstrap_states += result.bootstrap_states;
         bytes += result.bytes_written;
         checksum += result.checksum;
     }
@@ -373,6 +397,7 @@ void print_summary(
               << ",\"workers\":" << config.workers
               << ",\"games\":" << games
               << ",\"steps\":" << steps
+              << ",\"bootstrap_states\":" << bootstrap_states
               << ",\"simulations\":" << simulations
               << ",\"seconds\":" << seconds
               << ",\"games_per_second\":" << (games / seconds)
