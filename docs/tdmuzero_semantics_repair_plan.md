@@ -114,9 +114,9 @@ Completed:
 
 ### D2.1 — transition shard v3 and explicit cutoff bootstrap
 
-Status: implemented; local validation required.
+Status: completed and validated.
 
-Implemented:
+Completed:
 
 1. Replay binary format and replay index version are now 3.
 2. Every v3 game entry persists:
@@ -131,39 +131,65 @@ Implemented:
    - root value;
    - policy target;
    - exact legal mask.
-4. Truncated tail targets now accumulate every available reward and bootstrap at the actual
+4. Truncated tail targets accumulate every available reward and bootstrap at the actual
    cutoff state, even when fewer than `n` transitions remain.
 5. The cutoff root can appear as the final valid K+1 prediction state.
 6. Terminal games are forbidden from carrying a cutoff bootstrap.
 7. Shard and index/direct wave-mode provenance must agree.
-8. Legacy transition shard v2 data is explicitly rejected for current training rather than
-   having terminal/truncated/bootstrap semantics inferred.
-9. The current dummy self-play shard generator emits v3 data and counts the extra cutoff
-   search in its simulation totals.
+8. Legacy transition shard v2 data is explicitly rejected for current training.
+9. The dummy self-play shard generator emits v3 data and counts the extra cutoff search.
+10. Focused, complete normal, complete LibTorch, and v3 generator smoke tests passed.
 
-D2.1 validation gate:
+### D2.2 — direct sequence sampling
 
-- v3 terminal/truncated/wave-mode metadata round-trips;
-- cutoff bootstrap tensors and value round-trip;
-- direct step and direct bootstrap reads match source histories;
-- hand-computed near-cutoff n-step targets pass;
-- current training replay rejects mode disagreement and missing cutoff bootstrap;
+Status: implemented; local validation required.
+
+Implemented:
+
+1. `DirectSequenceReplayDataset` opens v3 transition shards independently of the generic
+   whole-game reader.
+2. The direct training path reads only the step records needed by the union of K-step and
+   n-step targets. It never calls `ReplayDataset::read_game()`.
+3. `DirectPositionIndex` includes every transition root and each persisted truncated cutoff
+   root with equal sampling probability.
+4. A direct window ending before the real episode end uses the next stored root as a local
+   bootstrap record, preserving the same target mathematics as the whole-game oracle.
+5. Overlapping and duplicate windows are merged per game; every unique step record and
+   cutoff bootstrap is read at most once per batch.
+6. `build_reference_k_step_batch` remains as the whole-game oracle for parity tests.
+7. `test_direct_sequence_replay` compares all packed fields for:
+   - middle-of-game synthetic windows;
+   - real terminal tails;
+   - real truncated tails;
+   - the standalone persisted cutoff root;
+   - exact duplicates and overlapping windows;
+   - multiple shards.
+8. Per-batch diagnostics report requested/unique records, physical reads/bytes, and unique
+   games/shards.
+9. `bench_sequence_replay` reports sequence throughput, deduplication, read amplification,
+   checksums, and a first-batch reference parity gate.
+
+D2.2 validation gate:
+
+- direct/reference samples agree field by field;
+- direct sampling leaves generic `game_read_count` at zero;
+- cutoff roots are present in the uniform position index;
+- overlapping windows reduce unique records read;
 - full normal and LibTorch suites pass;
-- tiny v3 generator smoke produces a readable index and shards.
+- `bench_sequence_replay` runs on v3 smoke data with equal reference/direct checksum.
 
-### D2.2 — direct sequence I/O
+### D2.3 — physical range coalescing
 
-Status: blocked on D2.1 validation.
+Status: next after D2.2 validation.
 
-Next implementation:
+The current D2.2 path deduplicates logical step records but the low-level v3 reader still
+issues one physical read per unique step payload. D2.3 will:
 
-1. Expose game metadata and bootstrap records through the generic replay layer.
-2. Add direct range reads for the maximum of `K+1` prediction states and `n` reward steps.
-3. Avoid whole-game deserialization in the training sampler.
-4. Include persisted cutoff roots in the global position-uniform index.
-5. Sort and deduplicate overlapping physical ranges inside a batch.
-6. Compare direct sequence samples against the D1 whole-game reference path field by field.
-7. Add sequence I/O counters and throughput benchmarks.
+1. add one-seek contiguous step-range reads in `TransitionShardReader`;
+2. decode a merged range from one in-memory byte buffer;
+3. preserve exact I/O accounting;
+4. compare per-step and coalesced readers byte-for-byte;
+5. require a measurable reduction in physical read operations on long trajectories.
 
 Phase D completion gate:
 
@@ -171,7 +197,7 @@ Phase D completion gate:
 - direct and reference sequence samplers are identical for the same sample refs;
 - trainer consumes contiguous K-step batches without whole-game deserialization;
 - no truncated state is silently treated as terminal;
-- direct sequence I/O is measurably below whole-game I/O on long trajectories.
+- coalesced direct sequence I/O is measurably below whole-game I/O on long trajectories.
 
 ## Phase E — trainer and real-network self-play
 
@@ -200,8 +226,8 @@ Only after the complete training loop is correct:
 
 ## Remaining blockers before meaningful training
 
-1. D2.1 requires local validation.
-2. D2.2 must replace whole-game reads with direct sequence I/O.
+1. D2.2 requires local validation.
+2. D2.3 must coalesce unique adjacent step payloads into fewer physical reads.
 3. C2 legality loss is not connected to a trainer.
 4. No complete LibTorch optimizer/checkpoint training loop exists yet.
 
